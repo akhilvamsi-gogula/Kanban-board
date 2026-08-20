@@ -2,6 +2,13 @@
 
 The Part 2 backend is a minimal FastAPI service. It serves a smoke-test page at `/`, a health response at `/health`, and a JSON hello response at `/api/hello`.
 
+Part 6 adds the user-scoped Kanban API:
+
+- `GET /api/users/{user_id}/board` reads a validated board.
+- `PUT /api/users/{user_id}/board` replaces the validated board and persists it atomically.
+
+The seeded demo user is `demo-user`. The JSON store is created at `backend/data/kanban.json` by default. Set `KANBAN_DATA_PATH` to use a different local path during development or tests.
+
 ## Direct run
 
 ```bash

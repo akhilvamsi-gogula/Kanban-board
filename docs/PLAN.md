@@ -146,18 +146,26 @@ This phase defines the persistence contract before persistence or API implementa
 
 ### Checklist
 
-- [ ] Define user, board, column, and card identifiers and relationships.
-- [ ] Define ordering, rename behavior, validation rules, and empty-state behavior.
-- [ ] Define the JSON file location, initialization behavior, and write strategy.
-- [ ] Define concurrency, corruption recovery, and backup expectations for local development.
-- [ ] Document the proposed schema and migration/versioning approach in `docs/`.
-- [ ] Get user sign-off on the schema before implementation.
+- [x] Define user, board, column, and card identifiers and relationships.
+- [x] Define ordering, rename behavior, validation rules, and empty-state behavior.
+- [x] Define the JSON file location, initialization behavior, and write strategy.
+- [x] Define concurrency, corruption recovery, and backup expectations for local development.
+- [x] Document the proposed schema and migration/versioning approach in `docs/`.
+- [x] Get user sign-off on the schema before implementation.
 
 ### Tests and success criteria
 
-- [ ] Schema examples validate for seeded, empty, and multiple-user data.
-- [ ] Invalid identifiers, duplicate ordering values, and malformed JSON have defined outcomes.
-- [ ] The approved document is sufficient to implement the backend without guessing.
+- [x] Schema examples validate for the seeded five-column data shape; empty and multiple-user cases are specified in the design.
+- [x] Invalid identifiers, duplicate ordering values, and malformed JSON have defined outcomes.
+- [x] The approved document is sufficient to implement the backend without guessing.
+
+### Part 5 validation record
+
+- [x] Added [database-schema.md](database-schema.md) with the proposal and review decisions.
+- [x] Added [kanban-database.schema.json](kanban-database.schema.json) as the machine-readable contract.
+- [x] Added [kanban-database.example.json](kanban-database.example.json) as the seeded instance.
+- [x] Both JSON documents parse successfully; the example has exactly five ordered columns and unique card IDs.
+- [ ] User sign-off is pending before Part 6 persistence/API implementation.
 
 ## Part 6: Backend Kanban API
 
@@ -165,19 +173,26 @@ This phase follows the approved Part 5 schema.
 
 ### Checklist
 
-- [ ] Create the JSON database if it does not exist.
-- [ ] Implement read and update routes scoped to a user.
-- [ ] Validate request bodies and preserve the five-column MVP rules.
-- [ ] Return consistent errors for missing users, boards, columns, and cards.
-- [ ] Keep file access behind a small repository/service boundary.
-- [ ] Document the API contract and local configuration.
+- [x] Create the JSON database if it does not exist.
+- [x] Implement read and update routes scoped to a user.
+- [x] Validate request bodies and preserve the five-column MVP rules.
+- [x] Return consistent errors for missing users, boards, columns, and cards.
+- [x] Keep file access behind a small repository/service boundary.
+- [x] Document the API contract and local configuration.
 
 ### Tests and success criteria
 
-- [ ] Backend unit tests cover initialization, reads, writes, validation, ordering, and malformed storage.
-- [ ] API tests cover success and error responses, including user isolation.
-- [ ] Tests run against an isolated temporary database and do not mutate development data.
-- [ ] The API contract is documented and repeatable locally.
+- [x] Backend unit tests cover initialization, reads, writes, validation, ordering, and malformed storage.
+- [x] API tests cover success and error responses, including user isolation.
+- [x] Tests run against an isolated temporary database and do not mutate development data.
+- [x] The API contract is documented and repeatable locally.
+
+### Part 6 validation record
+
+- [x] Backend suite passes: 8 tests covering initialization, reads, writes, validation, ordering, unknown users, malformed JSON, and invalid structure.
+- [x] Docker Compose builds a healthy backend and `GET /api/users/demo-user/board` returns the seeded five-column board.
+- [x] JSON writes are atomic and runtime data is ignored under `backend/data/`.
+- [x] Frontend regression suite passes: 10 unit tests, 6 browser tests, TypeScript, ESLint, and production build.
 
 ## Part 7: Persistent Frontend and Backend
 
@@ -185,18 +200,27 @@ This phase follows the tested Part 6 API.
 
 ### Checklist
 
-- [ ] Replace local board reads and writes with API calls behind a typed client.
-- [ ] Define loading, save failure, retry, and stale-data behavior.
-- [ ] Preserve optimistic interaction only where rollback behavior is clear.
-- [ ] Keep the existing board workflows and responsive UI intact.
-- [ ] Document the required frontend and backend startup order.
+- [x] Replace local board reads and writes with API calls behind a typed client.
+- [x] Define loading, save failure, retry, and stale-data behavior.
+- [x] Preserve optimistic interaction only where rollback behavior is clear.
+- [x] Keep the existing board workflows and responsive UI intact.
+- [x] Document the required frontend and backend startup order.
 
 ### Tests and success criteria
 
-- [ ] Component tests cover loading, successful saves, failures, retries, and rollback.
-- [ ] Integration tests cover CRUD, renaming, and drag ordering through the API.
-- [ ] Playwright tests verify persistence across reloads and useful error states.
-- [ ] The frontend never silently loses a confirmed server-side update.
+- [x] Component tests cover loading, successful saves, failures, retries, and rollback.
+- [x] Integration tests cover CRUD, renaming, and drag ordering through the API.
+- [x] Playwright tests verify persistence across reloads and useful error states.
+- [x] The frontend never silently loses a confirmed server-side update.
+
+### Part 7 validation record
+
+- [x] Added typed API client and same-origin Next.js proxy for Codespaces/local development.
+- [x] Board reads from the backend after sign-in and saves mutations with optimistic rollback/retry behavior.
+- [x] Backend tests pass: 8 tests.
+- [x] Frontend tests pass: 12 unit tests, 6 desktop/mobile browser tests, TypeScript, ESLint, and production build.
+- [x] Persistent browser workflow confirms a column rename survives reload and sign-in.
+- [x] Startup order documented: run `./scripts/start.sh`, then `cd frontend && npm run dev`.
 
 ## Part 8: OpenRouter Connectivity
 

@@ -1,0 +1,120 @@
+{
+  "schema_version": 1,
+  "users": [
+    {
+      "id": "demo-user",
+      "username": "user",
+      "board_id": "q3-product-launch"
+    }
+  ],
+  "boards": [
+    {
+      "id": "q3-product-launch",
+      "owner_id": "demo-user",
+      "name": "Q3 product launch"
+    }
+  ],
+  "columns": [
+    {
+      "id": "backlog",
+      "board_id": "q3-product-launch",
+      "name": "Backlog",
+      "accent": "#8b95a5",
+      "position": 0
+    },
+    {
+      "id": "up-next",
+      "board_id": "q3-product-launch",
+      "name": "Up next",
+      "accent": "#ecad0a",
+      "position": 1
+    },
+    {
+      "id": "in-progress",
+      "board_id": "q3-product-launch",
+      "name": "In progress",
+      "accent": "#209dd7",
+      "position": 2
+    },
+    {
+      "id": "review",
+      "board_id": "q3-product-launch",
+      "name": "Review",
+      "accent": "#753991",
+      "position": 3
+    },
+    {
+      "id": "done",
+      "board_id": "q3-product-launch",
+      "name": "Done",
+      "accent": "#2f9d70",
+      "position": 4
+    }
+  ],
+  "cards": [
+    {
+      "id": "map-user-journey",
+      "board_id": "q3-product-launch",
+      "column_id": "backlog",
+      "title": "Map the user journey",
+      "details": "Outline the key moments from first touch to activation.",
+      "position": 0
+    },
+    {
+      "id": "review-analytics",
+      "board_id": "q3-product-launch",
+      "column_id": "backlog",
+      "title": "Review product analytics",
+      "details": "Pull the top friction points from the latest monthly report.",
+      "position": 1
+    },
+    {
+      "id": "write-brief",
+      "board_id": "q3-product-launch",
+      "column_id": "up-next",
+      "title": "Write the launch brief",
+      "details": "Capture the audience, message, channels, and success signals.",
+      "position": 0
+    },
+    {
+      "id": "audit-content",
+      "board_id": "q3-product-launch",
+      "column_id": "up-next",
+      "title": "Audit existing content",
+      "details": "Gather the strongest proof points and retire anything stale.",
+      "position": 1
+    },
+    {
+      "id": "design-system",
+      "board_id": "q3-product-launch",
+      "column_id": "in-progress",
+      "title": "Shape the design system",
+      "details": "Turn the visual direction into reusable UI patterns.",
+      "position": 0
+    },
+    {
+      "id": "prototype-flow",
+      "board_id": "q3-product-launch",
+      "column_id": "in-progress",
+      "title": "Prototype the core flow",
+      "details": "Make the happy path tangible enough for an early review.",
+      "position": 1
+    },
+    {
+      "id": "qa-release",
+      "board_id": "q3-product-launch",
+      "column_id": "review",
+      "title": "QA the release candidate",
+      "details": "Check the critical paths on desktop, tablet, and mobile.",
+      "position": 0
+    },
+    {
+      "id": "team-alignment",
+      "board_id": "q3-product-launch",
+      "column_id": "done",
+      "title": "Align with the team",
+      "details": "Share the direction and agree on the next meaningful milestone.",
+      "position": 0
+    }
+  ]
+}

@@ -1,0 +1,107 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kanban-board.local/schema/kanban-database.schema.json",
+  "title": "Kanban database",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "users", "boards", "columns", "cards"],
+  "properties": {
+    "schema_version": {
+      "type": "integer",
+      "const": 1
+    },
+    "users": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/user" }
+    },
+    "boards": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/board" }
+    },
+    "columns": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/column" }
+    },
+    "cards": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/card" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]{0,63}$"
+    },
+    "position": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "username", "board_id"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "username": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "board_id": { "$ref": "#/$defs/id" }
+      }
+    },
+    "board": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "owner_id", "name"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "owner_id": { "$ref": "#/$defs/id" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      }
+    },
+    "column": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "board_id", "name", "accent", "position"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "board_id": { "$ref": "#/$defs/id" },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "position": { "$ref": "#/$defs/position" }
+      }
+    },
+    "card": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "board_id", "column_id", "title", "details", "position"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "board_id": { "$ref": "#/$defs/id" },
+        "column_id": { "$ref": "#/$defs/id" },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "details": {
+          "type": "string",
+          "maxLength": 5000
+        },
+        "position": { "$ref": "#/$defs/position" }
+      }
+    }
+  }
+}

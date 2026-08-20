@@ -68,6 +68,18 @@ Open http://localhost:8000/ and confirm the page reports the API response. Stop 
 
 For a direct run without Docker, see [backend/README.md](backend/README.md). In Codespaces, forward port 8000 to access the backend page from a browser.
 
+## Run the persistent app
+
+Start the backend before the frontend so the board can load and save through the API:
+
+```bash
+./scripts/start.sh
+cd frontend
+npm run dev
+```
+
+The frontend uses a same-origin development proxy by default, which works with forwarded Codespaces port 3000 URLs. To use a separately hosted API, set `NEXT_PUBLIC_API_BASE_URL` before starting Next.js.
+
 ## Validate
 
 ```bash
