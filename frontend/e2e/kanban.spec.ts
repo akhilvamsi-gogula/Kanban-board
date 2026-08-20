@@ -1,7 +1,23 @@
-import { expect, test } from "@playwright/test";
+import { expect, Page, test } from "@playwright/test";
+
+async function signIn(page: Page) {
+  const username = page.getByLabel("Username");
+  const password = page.getByLabel("Password");
+  await username.fill("");
+  await password.fill("");
+  await username.click();
+  await username.pressSequentially("user");
+  await password.click();
+  await password.pressSequentially("password");
+  await expect(username).toHaveValue("user");
+  await expect(password).toHaveValue("password");
+  await page.getByRole("button", { name: "Open board" }).click();
+  await expect(page.getByRole("heading", { name: "Q3 product launch" })).toBeVisible({ timeout: 15000 });
+}
 
 test("supports the core board workflow", async ({ page }) => {
   await page.goto("/");
+  await signIn(page);
   await expect(page.getByRole("heading", { name: "Q3 product launch" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Backlog" })).toBeVisible();
 
@@ -21,10 +37,26 @@ test("supports the core board workflow", async ({ page }) => {
   await page.getByRole("button", { name: "Delete card" }).click();
   await expect(page.getByText("Browser workflow card")).not.toBeVisible();
 });
-
 test("keeps the board usable on a narrow viewport", async ({ page }) => {
-    await page.setViewportSize({ width: 700, height: 900 });
+  await page.setViewportSize({ width: 700, height: 900 });
   await page.goto("/");
+  await signIn(page);
   await expect(page.getByRole("heading", { name: "Q3 product launch" })).toBeVisible();
   await expect(page.locator(".board-grid")).toHaveCSS("overflow-x", "auto");
+});
+
+test("requires sign-in and supports logout", async ({ page }) => {
+  await page.goto("/");
+
+  await expect(page.getByRole("heading", { name: "Sign in to Kanban board" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Q3 product launch" })).not.toBeVisible();
+  await page.getByLabel("Username").fill("user");
+  await page.getByLabel("Password").fill("wrong");
+  await page.getByRole("button", { name: "Open board" }).click();
+  await expect(page.locator(".auth-error")).toBeVisible();
+
+  await signIn(page);
+  await expect(page.getByRole("heading", { name: "Q3 product launch" })).toBeVisible();
+  await page.getByRole("button", { name: "Log out" }).click();
+  await expect(page.getByRole("heading", { name: "Sign in to Kanban board" })).toBeVisible();
 });

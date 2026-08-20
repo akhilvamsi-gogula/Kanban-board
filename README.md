@@ -52,6 +52,22 @@ npm run dev
 
 Open http://localhost:3000.
 
+## Run the Part 2 backend
+
+The FastAPI smoke-test service can run directly with Python or through Docker Compose.
+
+```bash
+./scripts/start.sh
+```
+
+Open http://localhost:8000/ and confirm the page reports the API response. Stop it with:
+
+```bash
+./scripts/stop.sh
+```
+
+For a direct run without Docker, see [backend/README.md](backend/README.md). In Codespaces, forward port 8000 to access the backend page from a browser.
+
 ## Validate
 
 ```bash
@@ -59,6 +75,13 @@ npm run lint
 npm run test -- --run
 npm run build
 npm run test:e2e
+```
+
+Backend tests:
+
+```bash
+cd backend
+.venv/bin/python -m pytest
 ```
 
 Playwright tests require its browser binaries and supported system libraries.

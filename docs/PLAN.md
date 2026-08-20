@@ -43,13 +43,13 @@ This phase follows the validated MVP and establishes the local service boundary.
 
 ### Checklist
 
-- [ ] Add a root or service-level Dockerfile and `docker-compose.yml`/Compose configuration for the planned services.
-- [ ] Define Docker, FastAPI, dependency, environment-variable, volume, and network conventions.
-- [ ] Confirm the Codespaces Docker runtime and document a non-Docker fallback for frontend-only development.
-- [ ] Add a minimal FastAPI health or hello-world endpoint.
-- [ ] Add start and stop scripts under `scripts/` for the supported environment.
-- [ ] Add a small example request from the static test page to the API.
-- [ ] Document how to start, stop, and troubleshoot the services.
+- [x] Add a root or service-level Dockerfile and `docker-compose.yml`/Compose configuration for the planned services.
+- [x] Define Docker, FastAPI, dependency, environment-variable, volume, and network conventions.
+- [x] Confirm the Codespaces Docker runtime and document a non-Docker fallback for frontend-only development.
+- [x] Add a minimal FastAPI health or hello-world endpoint.
+- [x] Add start and stop scripts under `scripts/` for the supported environment.
+- [x] Add a small example request from the static test page to the API.
+- [x] Document how to start, stop, and troubleshoot the services.
 
 ### Docker in GitHub Codespaces
 
@@ -57,21 +57,29 @@ Docker can generally be used in Codespaces, but installing the Docker CLI alone 
 
 Known limitations to account for in this plan:
 
-- [ ] The Codespace may not have a running daemon, or the user may not have permission to access its socket.
-- [ ] Docker-in-Docker may require privileged container support, which can be restricted by organization policy or the selected Codespaces configuration.
-- [ ] Nested containers consume Codespaces CPU, memory, disk, and network quota; builds and Playwright runs may need resource tuning.
-- [ ] Published ports must use Codespaces port forwarding, and service-to-service hostnames differ between the host and Compose network.
-- [ ] Docker data and named volumes are not a substitute for durable production storage; Codespace recreation can remove local state.
-- [ ] Secrets must be supplied through Codespaces secrets or environment configuration and must not be baked into images, logs, or Compose files.
-- [ ] If Docker is unavailable, the FastAPI service must remain runnable directly with the documented Python command so development is not blocked.
+- [x] The Codespace may not have a running daemon, or the user may not have permission to access its socket.
+- [x] Docker-in-Docker may require privileged container support, which can be restricted by organization policy or the selected Codespaces configuration.
+- [x] Nested containers consume Codespaces CPU, memory, disk, and network quota; builds and Playwright runs may need resource tuning.
+- [x] Published ports must use Codespaces port forwarding, and service-to-service hostnames differ between the host and Compose network.
+- [x] Docker data and named volumes are not a substitute for durable production storage; Codespace recreation can remove local state.
+- [x] Secrets must be supplied through Codespaces secrets or environment configuration and must not be baked into images, logs, or Compose files.
+- [x] If Docker is unavailable, the FastAPI service must remain runnable directly with the documented Python command so development is not blocked.
 
 ### Tests and success criteria
 
-- [ ] Backend unit test verifies the hello-world or health response.
-- [ ] A local integration check verifies the static page can call the API.
-- [ ] Start and stop scripts work without exposing secrets or requiring interactive input.
-- [ ] Existing frontend tests and the MVP user experience remain unchanged.
-- [ ] Docker and non-Docker startup paths both have documented validation steps.
+- [x] Backend unit test verifies the hello-world or health response.
+- [x] A local integration check verifies the static page can call the API.
+- [x] Start and stop scripts work without exposing secrets or requiring interactive input.
+- [x] Existing frontend tests and the MVP user experience remain unchanged.
+- [x] Docker and non-Docker startup paths both have documented validation steps.
+
+### Part 2 validation record
+
+- [x] Backend unit tests pass: 3 tests.
+- [x] Direct Uvicorn startup serves `/`, `/health`, and `/api/hello`.
+- [x] Docker Compose builds the backend image and reports the container healthy.
+- [x] `scripts/start.sh` waits for readiness and `scripts/stop.sh` removes the service cleanly.
+- [x] Frontend lint, TypeScript, unit tests, and production build pass after backend scaffolding.
 
 ## Part 3: Frontend MVP
 
@@ -79,23 +87,30 @@ The current MVP implementation is the target for this phase. Any changes require
 
 ### Checklist
 
-- [ ] Confirm the Next.js App Router frontend starts from `frontend/`.
-- [ ] Display the `Kanban board` identity and one board at `/`.
-- [ ] Render exactly five columns with seeded dummy cards.
-- [ ] Allow columns to be renamed through their column action.
-- [ ] Allow cards to be added, edited, and deleted with deletion confirmation.
-- [ ] Support pointer and keyboard drag-and-drop between columns.
-- [ ] Support reordering cards within a column.
-- [ ] Keep state local and reset it on refresh.
-- [ ] Keep the interface responsive and accessible without adding unrelated navigation or features.
+- [x] Confirm the Next.js App Router frontend starts from `frontend/`.
+- [x] Display the `Kanban board` identity and one board at `/`.
+- [x] Render exactly five columns with seeded dummy cards.
+- [x] Allow columns to be renamed through their column action.
+- [x] Allow cards to be added, edited, and deleted with deletion confirmation.
+- [x] Support pointer and keyboard drag-and-drop between columns.
+- [x] Support reordering cards within a column.
+- [x] Keep state local and reset it on refresh.
+- [x] Keep the interface responsive and accessible without adding unrelated navigation or features.
 
 ### Tests and success criteria
 
-- [ ] Unit/component tests cover rendering, card CRUD, delete confirmation, column renaming, and reordering.
-- [ ] Keyboard interaction tests cover the drag-and-drop path or its supported equivalent.
-- [ ] Playwright tests cover the core workflow at desktop and mobile widths.
-- [ ] Lint, TypeScript, unit tests, production build, and end-to-end tests pass.
-- [ ] The board is usable at narrow widths and no required content is clipped or overlapped.
+- [x] Unit/component tests cover rendering, card CRUD, delete confirmation, column renaming, and reordering.
+- [x] Keyboard interaction tests cover the drag-and-drop path or its supported equivalent.
+- [x] Playwright tests cover the core workflow at desktop and mobile widths.
+- [x] Lint, TypeScript, unit tests, production build, and end-to-end tests pass.
+- [x] The board is usable at narrow widths and no required content is clipped or overlapped.
+
+### Part 3 validation record
+
+- [x] Vitest passes: 1 file and 6 tests, including CRUD, column renaming, accessible keyboard drag handles, and reorder logic.
+- [x] Playwright passes: 4 desktop and mobile workflow tests.
+- [x] ESLint, TypeScript, and Next.js production build pass with static `/` output.
+- [x] The implementation remains client-only and refresh resets the seeded in-memory board.
 
 ## Part 4: Fake Sign-In Experience
 
@@ -103,18 +118,27 @@ This phase changes the first-load experience after the MVP and is explicitly a d
 
 ### Checklist
 
-- [ ] Agree that dummy credentials are acceptable and document the limitation.
-- [ ] Show a sign-in screen before the board.
-- [ ] Accept only username `user` and password `password`.
-- [ ] Show an understandable validation error for invalid credentials.
-- [ ] Allow a signed-in user to log out and return to the sign-in screen.
-- [ ] Define whether refresh preserves or resets the demo session.
+- [x] Agree that dummy credentials are acceptable and document the limitation.
+- [x] Show a sign-in screen before the board.
+- [x] Accept only username `user` and password `password`.
+- [x] Show an understandable validation error for invalid credentials.
+- [x] Allow a signed-in user to log out and return to the sign-in screen.
+- [x] Define session behavior: logout/login preserves in-memory board changes, while refresh resets the demo session and board.
 
 ### Tests and success criteria
 
-- [ ] Component tests cover valid, invalid, empty, and logout flows.
-- [ ] Browser tests verify the board is inaccessible through the normal UI before sign-in.
-- [ ] The demo limitation is documented and no real authentication claims are made.
+- [x] Component tests cover valid, invalid, empty, and logout flows.
+- [x] Browser tests verify the board is inaccessible through the normal UI before sign-in.
+- [x] The demo limitation is documented and no real authentication claims are made.
+
+### Part 4 validation record
+
+- [x] Sign-in is client-only React state; refresh resets the session to signed out.
+- [x] Board state remains mounted but hidden during logout, so card moves, edits, additions, deletions, and column renames survive logout/login without being persisted across refresh.
+- [x] The accepted demo credentials are `user` / `password`; no credentials are persisted or sent to a server.
+- [x] Vitest passes: 3 files and 10 tests, including credential behavior and logout/login board-state preservation.
+- [x] Playwright passes: 6 desktop and mobile tests, including pre-login protection, login, logout, CRUD, and responsive behavior.
+- [x] TypeScript, ESLint, and production build pass.
 
 ## Part 5: JSON Database Model
 

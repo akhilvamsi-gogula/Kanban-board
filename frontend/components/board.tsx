@@ -9,7 +9,18 @@ import type { Card, Column } from "../lib/types";
 import { ColumnView } from "./column";
 import { CardFormDialog, DeleteCardDialog, RenameColumnDialog } from "./board-dialogs";
 
-export function Board() {
+export function reorderCards(cards: Card[], activeId: string, overId: string): Card[] {
+  const oldIndex = cards.findIndex((card) => card.id === activeId);
+  const newIndex = cards.findIndex((card) => card.id === overId);
+  return oldIndex < 0 || newIndex < 0 ? cards : arrayMove(cards, oldIndex, newIndex);
+}
+
+type BoardProps = {
+  isVisible?: boolean;
+  onLogout: () => void;
+};
+
+export function Board({ isVisible = true, onLogout }: BoardProps) {
   const [columns, setColumns] = useState(initialColumns);
   const [activeCard, setActiveCard] = useState<Card | null>(null);
   const [cardDialog, setCardDialog] = useState<{ columnId: string; card?: Card } | null>(null);
@@ -28,9 +39,7 @@ export function Board() {
       const destinationColumn = current.find((column) => column.id === over.id) ?? current.find((column) => column.cards.some((card) => card.id === over.id));
       if (!sourceColumn || !destinationColumn) return current;
       if (sourceColumn.id === destinationColumn.id) {
-        const oldIndex = sourceColumn.cards.findIndex((card) => card.id === active.id);
-        const newIndex = sourceColumn.cards.findIndex((card) => card.id === over.id);
-        return current.map((column) => column.id === sourceColumn.id ? { ...column, cards: arrayMove(column.cards, oldIndex, newIndex) } : column);
+        return current.map((column) => column.id === sourceColumn.id ? { ...column, cards: reorderCards(column.cards, String(active.id), String(over.id)) } : column);
       }
       const movedCard = sourceColumn.cards.find((card) => card.id === active.id);
       if (!movedCard) return current;
@@ -68,8 +77,8 @@ export function Board() {
     setRenameColumn(null);
   }
 
-  return <main className="app-shell">
-    <header className="topbar"><div className="brand-mark">Kanban board</div><div className="topbar-meta"><span className="live-dot" /> Session only</div></header>
+  return <main className="app-shell" hidden={!isVisible} aria-hidden={!isVisible}>
+    <header className="topbar"><div className="brand-mark">Kanban board</div><div className="topbar-actions"><div className="topbar-meta"><span className="live-dot" /> Session only</div><button type="button" className="button button-quiet button-small" onClick={onLogout}>Log out</button></div></header>
     <section className="board-toolbar"><div><span className="section-label">Board</span><h1>Q3 product launch</h1></div><div className="toolbar-actions"><span className="card-total">{columns.reduce((total, column) => total + column.cards.length, 0)} cards</span><button type="button" className="button button-primary toolbar-add" onClick={() => setCardDialog({ columnId: columns[0].id })}><Plus size={17} /> Add card</button></div></section>
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}><div className="board-grid">{columns.map((column) => <ColumnView key={column.id} column={column} onAdd={(columnId) => setCardDialog({ columnId })} onRename={setRenameColumn} onEdit={(card) => { const location = findCard(card.id); if (location) setCardDialog({ columnId: location.columnId, card }); }} onDelete={setDeleteCard} />)}</div><DragOverlay>{activeCard ? <div className="task-card task-card-overlay"><ArrowUpRight size={16} /><h3>{activeCard.title}</h3></div> : null}</DragOverlay></DndContext>
     <footer className="board-footer"><span>Five steps, one shared direction.</span><span className="footer-key"><span className="key-dot" /> Changes live in this session only</span></footer>
