@@ -147,10 +147,6 @@ Playwright requires browser binaries and compatible system libraries. Live AI br
 
 ## Troubleshooting
 
-### The browser cannot open localhost
-
-In Codespaces or a remote container, use the forwarded frontend port URL. Forward port 3000 for the frontend and port 8000 for the backend when needed.
-
 ### The frontend shows a backend or rewrite error
 
 Confirm the backend is running:
@@ -168,12 +164,3 @@ This is an OpenRouter account or model quota limitation, not a Kanban board fail
 ### Reset the local board data
 
 Stop the backend, remove `backend/data/kanban.json`, and start the backend again. The seeded board will be recreated.
-
-## Project Layout
-
-```text
-frontend/        Next.js board UI, assistant workspace, and browser tests
-backend/         FastAPI board API, provider integration, and unit tests
-docs/            Schema, roadmap, and project documentation
-scripts/         Docker start and stop helpers
-```
