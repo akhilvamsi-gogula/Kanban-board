@@ -2,6 +2,8 @@
 
 A client-rendered Kanban MVP built with Next.js in `frontend`.
 
+![Kanban board preview](docs/kanban-board-preview.svg)
+
 ## Features
 
 - One board with five fixed, renameable columns
