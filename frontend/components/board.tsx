@@ -1,0 +1,81 @@
+"use client";
+
+import { DndContext, DragEndEvent, DragOverlay, PointerSensor, KeyboardSensor, closestCorners, useSensor, useSensors } from "@dnd-kit/core";
+import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
+import { useState } from "react";
+import { ArrowUpRight, Check, Plus, Sparkles } from "lucide-react";
+import { initialColumns } from "../lib/initial-data";
+import type { Card, Column } from "../lib/types";
+import { ColumnView } from "./column";
+import { CardFormDialog, DeleteCardDialog, RenameColumnDialog } from "./board-dialogs";
+
+export function Board() {
+  const [columns, setColumns] = useState(initialColumns);
+  const [activeCard, setActiveCard] = useState<Card | null>(null);
+  const [cardDialog, setCardDialog] = useState<{ columnId: string; card?: Card } | null>(null);
+  const [renameColumn, setRenameColumn] = useState<Column | null>(null);
+  const [deleteCard, setDeleteCard] = useState<Card | null>(null);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
+
+  function findCard(cardId: string) { for (const column of columns) { const card = column.cards.find((item) => item.id === cardId); if (card) return { card, columnId: column.id }; } return null; }
+  function handleDragStart({ active }: { active: { id: string | number } }) { const result = findCard(String(active.id)); if (result) setActiveCard(result.card); }
+  function handleDragCancel() { setActiveCard(null); }
+  function handleDragEnd({ active, over }: DragEndEvent) {
+    setActiveCard(null);
+    if (!over || active.id === over.id) return;
+    setColumns((current) => {
+      const sourceColumn = current.find((column) => column.cards.some((card) => card.id === active.id));
+      const destinationColumn = current.find((column) => column.id === over.id) ?? current.find((column) => column.cards.some((card) => card.id === over.id));
+      if (!sourceColumn || !destinationColumn) return current;
+      if (sourceColumn.id === destinationColumn.id) {
+        const oldIndex = sourceColumn.cards.findIndex((card) => card.id === active.id);
+        const newIndex = sourceColumn.cards.findIndex((card) => card.id === over.id);
+        return current.map((column) => column.id === sourceColumn.id ? { ...column, cards: arrayMove(column.cards, oldIndex, newIndex) } : column);
+      }
+      const movedCard = sourceColumn.cards.find((card) => card.id === active.id);
+      if (!movedCard) return current;
+      const insertIndex = destinationColumn.cards.findIndex((card) => card.id === over.id);
+      return current.map((column) => {
+        if (column.id === sourceColumn.id) return { ...column, cards: column.cards.filter((card) => card.id !== active.id) };
+        if (column.id === destinationColumn.id) {
+          const cards = [...column.cards];
+          cards.splice(insertIndex < 0 ? cards.length : insertIndex, 0, movedCard);
+          return { ...column, cards };
+        }
+        return column;
+      });
+    });
+  }
+  function addCard(title: string, details: string) {
+    if (!cardDialog) return;
+    const card = { id: `card-${Date.now()}`, title, details };
+    setColumns((current) => current.map((column) => column.id === cardDialog.columnId ? { ...column, cards: [...column.cards, card] } : column));
+    setCardDialog(null);
+  }
+  function updateCard(title: string, details: string) {
+    if (!cardDialog?.card) return;
+    setColumns((current) => current.map((column) => ({ ...column, cards: column.cards.map((card) => card.id === cardDialog.card?.id ? { ...card, title, details } : card) })));
+    setCardDialog(null);
+  }
+  function confirmDelete() {
+    if (!deleteCard) return;
+    setColumns((current) => current.map((column) => ({ ...column, cards: column.cards.filter((card) => card.id !== deleteCard.id) })));
+    setDeleteCard(null);
+  }
+  function updateColumnName(name: string) {
+    if (!renameColumn) return;
+    setColumns((current) => current.map((column) => column.id === renameColumn.id ? { ...column, name } : column));
+    setRenameColumn(null);
+  }
+
+  return <main className="app-shell">
+    <header className="topbar"><div className="brand-mark"><span>flow</span><i>.</i></div><div className="topbar-meta"><span className="live-dot" /> Local workspace <span className="topbar-divider" /> <span>20 Aug 2026</span></div></header>
+    <section className="hero"><div className="hero-copy"><div className="kicker"><Sparkles size={14} /> Product studio</div><h1>Make progress <em>visible.</em></h1><p>A focused space for turning good ideas into shipped work, one clear step at a time.</p></div><div className="hero-stat"><span>Board pulse</span><strong>{columns.reduce((total, column) => total + column.cards.length, 0)} <small>cards in motion</small></strong><div className="stat-line"><span style={{ width: "68%" }} /></div><p><Check size={13} /> Momentum is building</p></div></section>
+    <section className="board-toolbar"><div><span className="section-label">Workspace /</span><h2>Q3 product launch</h2></div><button type="button" className="button button-primary toolbar-add" onClick={() => setCardDialog({ columnId: columns[0].id })}><Plus size={17} /> Add card</button></section>
+    <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}><div className="board-grid">{columns.map((column) => <ColumnView key={column.id} column={column} onAdd={(columnId) => setCardDialog({ columnId })} onRename={setRenameColumn} onEdit={(card) => { const location = findCard(card.id); if (location) setCardDialog({ columnId: location.columnId, card }); }} onDelete={setDeleteCard} />)}</div><DragOverlay>{activeCard ? <div className="task-card task-card-overlay"><ArrowUpRight size={16} /><h3>{activeCard.title}</h3></div> : null}</DragOverlay></DndContext>
+    <footer className="board-footer"><span>Five steps, one shared direction.</span><span className="footer-key"><span className="key-dot" /> Changes live in this session only</span></footer>
+    {cardDialog && <CardFormDialog card={cardDialog.card} onClose={() => setCardDialog(null)} onSubmit={cardDialog.card ? updateCard : addCard} />}
+    {renameColumn && <RenameColumnDialog column={renameColumn} onClose={() => setRenameColumn(null)} onSubmit={updateColumnName} />}
+    {deleteCard && <DeleteCardDialog card={deleteCard} onClose={() => setDeleteCard(null)} onConfirm={confirmDelete} />}
+  </main>;
+}
