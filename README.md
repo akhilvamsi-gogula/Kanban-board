@@ -1,48 +1,47 @@
-# Kanban-board
+# Kanban Board
 
-A client-rendered Kanban MVP built with Next.js in `frontend`.
+A polished Kanban project-management app with one persistent board, five renameable columns, drag-and-drop cards, demo sign-in, and an optional AI co-pilot.
 
 ![Kanban board preview](docs/kanban-board-preview.svg)
 
-## Features
+## What It Does
 
-- One board with five fixed, renameable columns
-- Seeded dummy cards on initial load
-- Add, edit, delete, and drag cards
-- Reorder cards within a column
-- Responsive dark interface
-- In-memory state only; refresh resets the board
+- Displays one board with five seeded columns and example cards.
+- Adds, edits, deletes, and reorders cards.
+- Moves cards between columns with pointer or keyboard drag-and-drop.
+- Renames columns.
+- Persists board changes in a local JSON store through FastAPI.
+- Provides demo sign-in with `user` / `password`.
+- Provides an optional AI co-pilot that can answer board questions and request safe board updates.
 
-## What Was Done
+The demo sign-in is not production authentication. The local JSON store is intended for development, not concurrent production use.
 
-- Scaffolded a Next.js App Router project with TypeScript and Tailwind CSS.
-- Added dnd-kit for pointer and keyboard drag-and-drop interactions.
-- Built reusable board, column, card, and dialog components.
-- Added seeded data and typed domain models for cards and columns.
-- Implemented card creation, editing, deletion confirmation, column renaming, and card reordering.
-- Designed a responsive dark UI with accessible labels, focus states, drag feedback, and mobile overflow handling.
-- Fixed a dnd-kit server/client hydration mismatch by loading the interactive board client-side.
-- Added Vitest and Testing Library coverage for core board interactions.
-- Added Playwright scenarios for browser workflows and responsive behavior.
-- Added linting, type checking, production build scripts, and GitHub-ready ignore rules.
+## Requirements
 
-## AI Skills Demonstrated
+- Node.js 20 or later and npm
+- Python 3.12 or later
+- Docker Compose, optional but recommended for the backend
 
-This repository demonstrates practical AI-assisted engineering through:
+## First-Time Setup
 
-- Requirement analysis and clarification before implementation.
-- Planning a project in phases with explicit acceptance checks.
-- Choosing appropriate libraries instead of over-engineering core behavior.
-- Designing typed React state and reusable component boundaries.
-- Building accessible interactions, including keyboard drag-and-drop.
-- Debugging hydration, selector, CSS, and type-checking failures from actual output.
-- Writing focused unit tests and end-to-end browser tests.
-- Validating with lint, TypeScript, tests, and production builds.
-- Reviewing Git changes, keeping generated artifacts ignored, and pushing clean commits.
+From the repository root:
 
-## Run Locally
+```bash
+cp .env.example .env
+chmod 600 .env
+```
 
-Requires Node.js 20 or later.
+Open `.env` and set `OPENROUTER_API_KEY` if you want to use the AI co-pilot. Never put the key in `frontend/.env.local`, a `NEXT_PUBLIC_` variable, source code, tests, screenshots, or commit history. `.env` is ignored by Git.
+
+## Start With Docker
+
+Start the FastAPI backend:
+
+```bash
+./scripts/start.sh
+```
+
+The backend runs at `http://127.0.0.1:8000`. In a second terminal, start the frontend:
 
 ```bash
 cd frontend
@@ -50,50 +49,131 @@ npm install
 npm run dev
 ```
 
-Open http://localhost:3000.
+Open `http://localhost:3000`, or use the forwarded port URL supplied by Codespaces or your remote development environment.
 
-## Run the Part 2 backend
+## Start Without Docker
 
-The FastAPI smoke-test service can run directly with Python or through Docker Compose.
+Create the Python environment and install backend dependencies:
 
 ```bash
-./scripts/start.sh
+cd backend
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Open http://localhost:8000/ and confirm the page reports the API response. Stop it with:
+In a second terminal:
 
 ```bash
-./scripts/stop.sh
-```
-
-For a direct run without Docker, see [backend/README.md](backend/README.md). In Codespaces, forward port 8000 to access the backend page from a browser.
-
-## Run the persistent app
-
-Start the backend before the frontend so the board can load and save through the API:
-
-```bash
-./scripts/start.sh
 cd frontend
+npm install
 npm run dev
 ```
 
-The frontend uses a same-origin development proxy by default, which works with forwarded Codespaces port 3000 URLs. To use a separately hosted API, set `NEXT_PUBLIC_API_BASE_URL` before starting Next.js.
-
-## Validate
+If port 8000 is occupied, use another backend port and configure the frontend before starting Next.js:
 
 ```bash
+cd backend
+.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+```
+
+```bash
+cd frontend
+KANBAN_BACKEND_URL=http://127.0.0.1:8001 npm run dev
+```
+
+## Using The App
+
+1. Open the frontend.
+2. Sign in with username `user` and password `password`.
+3. Use the board controls to add, edit, delete, rename, and move cards.
+4. Select the visible **AI co-pilot** control to open the assistant workspace.
+5. Try `How many cards are there?` or `Rename Backlog to Ideas`.
+
+Refreshing resets the demo sign-in state but does not reset the stored board data.
+
+## AI Co-Pilot
+
+The browser never calls OpenRouter directly. Only the FastAPI backend reads `OPENROUTER_API_KEY`.
+
+```env
+OPENROUTER_API_KEY=your_local_key
+OPENROUTER_MODEL=openai/gpt-oss-20b:free
+OPENROUTER_TIMEOUT_MS=15000
+```
+
+The default free model is subject to OpenRouter rate limits and account credits. A quota error does not prevent normal Kanban use; close the assistant and continue using the board. You can choose another available model by changing `OPENROUTER_MODEL` locally.
+
+AI requests include the current board and a limited conversation history. The backend validates structured responses before the frontend applies a board update. Do not send passwords, API keys, or unrelated private information in chat prompts.
+
+To check provider connectivity:
+
+```bash
+curl http://127.0.0.1:8000/api/ai/check
+```
+
+This requires a valid local key and consumes provider quota.
+
+## Useful Endpoints
+
+- `GET /health` - backend health check
+- `GET /api/hello` - smoke-test response
+- `GET /api/users/demo-user/board` - read the seeded board
+- `PUT /api/users/demo-user/board` - save the board
+- `GET /api/ai/check` - provider connectivity check
+- `POST /api/ai/chat` - structured board-aware assistant request
+
+## Validate Changes
+
+Frontend:
+
+```bash
+cd frontend
 npm run lint
+npx tsc --noEmit
 npm run test -- --run
 npm run build
 npm run test:e2e
 ```
 
-Backend tests:
+Backend:
 
 ```bash
 cd backend
-.venv/bin/python -m pytest
+.venv/bin/python -m pytest -q
 ```
 
-Playwright tests require its browser binaries and supported system libraries.
+Playwright requires browser binaries and compatible system libraries. Live AI browser tests also require provider availability and consume quota, so AI behavior is primarily covered with mocked provider tests.
+
+## Troubleshooting
+
+### The browser cannot open localhost
+
+In Codespaces or a remote container, use the forwarded frontend port URL. Forward port 3000 for the frontend and port 8000 for the backend when needed.
+
+### The frontend shows a backend or rewrite error
+
+Confirm the backend is running:
+
+```bash
+curl http://127.0.0.1:8000/health
+```
+
+If using port 8001, restart Next.js with `KANBAN_BACKEND_URL=http://127.0.0.1:8001`.
+
+### The AI assistant reports a rate limit or credit error
+
+This is an OpenRouter account or model quota limitation, not a Kanban board failure. Wait for the quota window to reset, add credits, or select another available model in `.env`.
+
+### Reset the local board data
+
+Stop the backend, remove `backend/data/kanban.json`, and start the backend again. The seeded board will be recreated.
+
+## Project Layout
+
+```text
+frontend/        Next.js board UI, assistant workspace, and browser tests
+backend/         FastAPI board API, provider integration, and unit tests
+docs/            Schema, roadmap, and project documentation
+scripts/         Docker start and stop helpers
+```

@@ -62,3 +62,35 @@ class BoardUpdate(BaseModel):
 class BoardResponse(BoardUpdate):
     id: str
     owner_id: str
+
+
+class ChatMessage(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    role: str = Field(min_length=1, max_length=32)
+    content: str = Field(min_length=1, max_length=10000)
+
+
+class AiChatRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    prompt: str = Field(min_length=1, max_length=2000)
+    board: BoardResponse | BoardUpdate | None = None
+    history: list[ChatMessage] = Field(default_factory=list)
+
+    @field_validator("prompt", mode="before")
+    @classmethod
+    def trim_prompt(cls, value: str) -> str:
+        if not isinstance(value, str):
+            return value
+        trimmed = value.strip()
+        if not trimmed:
+            raise ValueError("prompt cannot be empty")
+        return trimmed
+
+
+class AiChatResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    assistant_message: str = Field(min_length=1, max_length=4000)
+    board_update: dict[str, object] | None = None

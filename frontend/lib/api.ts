@@ -17,8 +17,11 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...options?.headers },
   });
   if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: string } | null;
-    throw new Error(body?.detail ?? `Request failed (${response.status})`);
+    const body = await response.json().catch(() => null) as { detail?: string | Array<{ msg?: string; loc?: Array<string | number> }> } | null;
+    const detail = Array.isArray(body?.detail)
+      ? body.detail.map((item) => item.msg ?? "Invalid request").join("; ")
+      : body?.detail;
+    throw new Error(detail ?? `Request failed (${response.status})`);
   }
   return response.json() as Promise<T>;
 }
@@ -37,6 +40,32 @@ export function saveBoard(userId: string, name: string, columns: Column[]): Prom
         position: columnIndex,
         cards: column.cards.map((card, cardIndex) => ({ ...card, position: cardIndex })),
       })),
+    }),
+  });
+}
+
+export type AiMessage = {
+  role: "user" | "assistant";
+  content: string;
+};
+
+export type AiBoardUpdate = {
+  name: string;
+  columns: ApiColumn[];
+};
+
+export type AiChatResponse = {
+  assistant_message: string;
+  board_update?: AiBoardUpdate;
+};
+
+export function askBoardAssistant(prompt: string, board: ApiBoard, history: AiMessage[] = []): Promise<AiChatResponse> {
+  return request<AiChatResponse>("/ai/chat", {
+    method: "POST",
+    body: JSON.stringify({
+      prompt,
+      board,
+      history,
     }),
   });
 }

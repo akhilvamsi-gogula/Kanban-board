@@ -17,13 +17,15 @@
 
 - Implemented as a modern Next.js App Router app with TypeScript
 - The NextJS app should be created in a subdirectory `frontend`
-- The interactive board is client-only and uses React local state
-- No persistence; refresh resets the seeded board
-- No user management for the MVP
+- The interactive board is client-only; board reads and writes use the FastAPI service after demo sign-in
+- Refresh resets the demo sign-in state, while the backend JSON store retains board changes
+- Demo sign-in uses `user` / `password`; it is not production authentication
+- The optional AI co-pilot sends board context to OpenRouter only through the backend
 - Uses dnd-kit for pointer and keyboard drag-and-drop
 - Uses lucide-react for interface icons
 - Uses Vitest and Testing Library for unit/component tests
 - Uses Playwright for browser workflow and responsive tests
+- Uses OpenRouter through a backend-only integration with `openai/gpt-oss-20b:free` by default
 - As simple as possible but with an elegant UI
 
 ## Color Scheme
@@ -56,6 +58,12 @@ npx tsc --noEmit
 npm run test -- --run
 npm run build
 npm run test:e2e
+```
+
+Run backend checks from `backend`:
+
+```bash
+.venv/bin/python -m pytest -q
 ```
 
 Playwright requires browser binaries and compatible system libraries. If browser launch fails with missing Linux libraries, report the environment limitation separately from application test failures.

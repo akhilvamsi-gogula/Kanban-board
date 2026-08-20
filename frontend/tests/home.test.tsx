@@ -58,6 +58,47 @@ describe("Home session lifecycle", () => {
     vi.unstubAllGlobals();
   });
 
+  it("shows an AI assistant panel for board prompts after sign-in", async () => {
+    const user = userEvent.setup();
+    let chatRequest: { prompt: string; history: Array<{ role: string; content: string }> } | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (_input: RequestInfo | URL, options?: RequestInit) => {
+      if (options?.method === "PUT") return { ok: true, json: async () => ({}) };
+      if (options?.method === "POST") {
+        const body = JSON.parse(String(options.body)) as typeof chatRequest;
+        chatRequest = body;
+        return { ok: true, json: async () => ({ assistant_message: "There are 8 cards on this board." }) };
+      }
+      return { ok: true, json: async () => ({
+        id: "q3-product-launch",
+        owner_id: "demo-user",
+        name: "Q3 product launch",
+        columns: initialColumns.map((column, columnIndex) => ({
+          ...column,
+          position: columnIndex,
+          cards: column.cards.map((card, cardIndex) => ({ ...card, position: cardIndex })),
+        })),
+      }) };
+    }));
+    render(<Home />);
+
+    await user.type(screen.getByLabelText("Username"), "user");
+    await user.type(screen.getByLabelText("Password"), "password");
+    await user.click(screen.getByRole("button", { name: "Open board" }));
+
+    expect(await screen.findByRole("button", { name: "AI assistant" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "AI assistant" }));
+    expect(screen.getByRole("heading", { name: "AI assistant" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Ask the board assistant")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Ask the board assistant"), "How many cards are there?");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("There are 8 cards on this board.")).toBeInTheDocument();
+    expect(chatRequest).not.toBeNull();
+    const submittedRequest = chatRequest as unknown as { prompt: string; history: Array<{ role: string; content: string }> };
+    expect(submittedRequest.prompt).toBe("How many cards are there?");
+    expect(submittedRequest.history.some((message) => message.content === "How many cards are there?")).toBe(false);
+    vi.unstubAllGlobals();
+  });
+
   it("rolls back a failed save and retries it", async () => {
     const user = userEvent.setup();
     const apiBoard = {

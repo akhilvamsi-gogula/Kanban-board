@@ -1,12 +1,13 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useEffect, useState } from "react";
-import { Board } from "../components/board";
 import { SignIn } from "../components/sign-in";
 import { fetchBoard, saveBoard, toColumns } from "../lib/api";
 import type { Column } from "../lib/types";
 
 const USER_ID = "demo-user";
+const Board = dynamic(() => import("../components/board").then((module) => module.Board), { ssr: false });
 
 export default function Home() {
   const [isSignedIn, setIsSignedIn] = useState(false);
@@ -64,6 +65,7 @@ export default function Home() {
         boardName={boardName}
         columns={columns ?? undefined}
         onColumnsChange={(next, previous) => void persistBoard(next, previous)}
+        onBoardNameChange={setBoardName}
         onLogout={() => setIsSignedIn(false)}
       />
       {isSignedIn && !columns && !loadError && <main className="state-shell"><p>Loading your board...</p></main>}
