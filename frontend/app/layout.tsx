@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "flow. | Product workspace",
-  description: "A focused workspace for turning ideas into shipped work.",
+  title: "Kanban board",
+  description: "A simple single-board Kanban workspace.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

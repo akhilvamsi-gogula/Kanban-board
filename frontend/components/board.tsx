@@ -3,7 +3,7 @@
 import { DndContext, DragEndEvent, DragOverlay, PointerSensor, KeyboardSensor, closestCorners, useSensor, useSensors } from "@dnd-kit/core";
 import { arrayMove, sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { useState } from "react";
-import { ArrowUpRight, Check, Plus, Sparkles } from "lucide-react";
+import { ArrowUpRight, Plus } from "lucide-react";
 import { initialColumns } from "../lib/initial-data";
 import type { Card, Column } from "../lib/types";
 import { ColumnView } from "./column";
@@ -69,9 +69,8 @@ export function Board() {
   }
 
   return <main className="app-shell">
-    <header className="topbar"><div className="brand-mark"><span>flow</span><i>.</i></div><div className="topbar-meta"><span className="live-dot" /> Local workspace <span className="topbar-divider" /> <span>20 Aug 2026</span></div></header>
-    <section className="hero"><div className="hero-copy"><div className="kicker"><Sparkles size={14} /> Product studio</div><h1>Make progress <em>visible.</em></h1><p>A focused space for turning good ideas into shipped work, one clear step at a time.</p></div><div className="hero-stat"><span>Board pulse</span><strong>{columns.reduce((total, column) => total + column.cards.length, 0)} <small>cards in motion</small></strong><div className="stat-line"><span style={{ width: "68%" }} /></div><p><Check size={13} /> Momentum is building</p></div></section>
-    <section className="board-toolbar"><div><span className="section-label">Workspace /</span><h2>Q3 product launch</h2></div><button type="button" className="button button-primary toolbar-add" onClick={() => setCardDialog({ columnId: columns[0].id })}><Plus size={17} /> Add card</button></section>
+    <header className="topbar"><div className="brand-mark">Kanban board</div><div className="topbar-meta"><span className="live-dot" /> Session only</div></header>
+    <section className="board-toolbar"><div><span className="section-label">Board</span><h1>Q3 product launch</h1></div><div className="toolbar-actions"><span className="card-total">{columns.reduce((total, column) => total + column.cards.length, 0)} cards</span><button type="button" className="button button-primary toolbar-add" onClick={() => setCardDialog({ columnId: columns[0].id })}><Plus size={17} /> Add card</button></div></section>
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}><div className="board-grid">{columns.map((column) => <ColumnView key={column.id} column={column} onAdd={(columnId) => setCardDialog({ columnId })} onRename={setRenameColumn} onEdit={(card) => { const location = findCard(card.id); if (location) setCardDialog({ columnId: location.columnId, card }); }} onDelete={setDeleteCard} />)}</div><DragOverlay>{activeCard ? <div className="task-card task-card-overlay"><ArrowUpRight size={16} /><h3>{activeCard.title}</h3></div> : null}</DragOverlay></DndContext>
     <footer className="board-footer"><span>Five steps, one shared direction.</span><span className="footer-key"><span className="key-dot" /> Changes live in this session only</span></footer>
     {cardDialog && <CardFormDialog card={cardDialog.card} onClose={() => setCardDialog(null)} onSubmit={cardDialog.card ? updateCard : addCard} />}

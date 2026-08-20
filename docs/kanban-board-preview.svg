@@ -5,18 +5,16 @@
   <circle cx="1180" cy="30" r="300" fill="#12364a" opacity=".45"/>
   <circle cx="90" cy="410" r="240" fill="#2a1d43" opacity=".28"/>
   <g font-family="Arial, sans-serif" fill="#f4f7fb">
-    <text x="70" y="62" font-size="29" font-weight="700">flow<tspan fill="#f5bd27">.</tspan></text>
-    <text x="1165" y="60" font-size="14" fill="#9caabd">● Local workspace　|　20 Aug 2026</text>
+    <text x="70" y="62" font-size="25" font-weight="700">Kanban board</text>
+    <text x="1235" y="60" font-size="14" fill="#9caabd">● Session only</text>
     <line x1="70" y1="88" x2="1370" y2="88" stroke="#264057"/>
-    <text x="70" y="145" font-size="13" font-weight="700" fill="#b36ad0" letter-spacing="2">PRODUCT STUDIO</text>
-    <text x="70" y="225" font-size="64" font-weight="700">Make progress <tspan fill="#35b9ee">visible.</tspan></text>
-    <text x="72" y="264" font-size="18" fill="#9caabd">A focused space for turning good ideas into shipped work, one clear step at a time.</text>
-    <text x="70" y="330" font-size="13" fill="#b36ad0" font-weight="700" letter-spacing="2">WORKSPACE /</text>
-    <text x="70" y="360" font-size="28" font-weight="700">Q3 product launch</text>
-    <rect x="1245" y="326" width="125" height="44" rx="5" fill="#f5bd27"/>
-    <text x="1270" y="354" font-size="14" fill="#071321" font-weight="700">+ Add card</text>
+    <text x="70" y="175" font-size="13" fill="#b36ad0" font-weight="700" letter-spacing="2">BOARD</text>
+    <text x="70" y="220" font-size="36" font-weight="700">Q3 product launch</text>
+    <text x="1120" y="211" font-size="14" fill="#9caabd">8 cards</text>
+    <rect x="1245" y="184" width="125" height="44" rx="5" fill="#f5bd27"/>
+    <text x="1270" y="212" font-size="14" fill="#071321" font-weight="700">+ Add card</text>
   </g>
-  <g transform="translate(70 390)">
+  <g transform="translate(70 260)">
     <g font-family="Arial, sans-serif">
       <g fill="#10253a" stroke="#264057"><rect width="244" height="360" rx="8"/><rect x="264" width="244" height="360" rx="8"/><rect x="528" width="244" height="360" rx="8"/><rect x="792" width="244" height="360" rx="8"/><rect x="1056" width="244" height="360" rx="8"/></g>
       <g fill="#35b9ee"><rect width="244" height="4" rx="2"/><rect x="264" width="244" height="4" rx="2"/><rect x="528" width="244" height="4" rx="2"/><rect x="792" width="244" height="4" rx="2"/><rect x="1056" width="244" height="4" rx="2"/></g>
