@@ -165,7 +165,7 @@ This phase defines the persistence contract before persistence or API implementa
 - [x] Added [kanban-database.schema.json](kanban-database.schema.json) as the machine-readable contract.
 - [x] Added [kanban-database.example.json](kanban-database.example.json) as the seeded instance.
 - [x] Both JSON documents parse successfully; the example has exactly five ordered columns and unique card IDs.
-- [ ] User sign-off is pending before Part 6 persistence/API implementation.
+- [x] User approved the schema and Part 6 persistence/API implementation proceeded.
 
 ## Part 6: Backend Kanban API
 
@@ -216,7 +216,9 @@ This phase follows the tested Part 6 API.
 ### Part 7 validation record
 
 - [x] Added typed API client and same-origin Next.js proxy for Codespaces/local development.
+- [x] Default browser API calls use `/backend-api`; Next.js rewrites that path to local FastAPI `/api` routes. `NEXT_PUBLIC_API_BASE_URL` remains available for a separately hosted API.
 - [x] Board reads from the backend after sign-in and saves mutations with optimistic rollback/retry behavior.
+- [x] Loading, backend-load failure, save failure, and retry states are visible in the frontend.
 - [x] Backend tests pass: 8 tests.
 - [x] Frontend tests pass: 12 unit tests, 6 desktop/mobile browser tests, TypeScript, ESLint, and production build.
 - [x] Persistent browser workflow confirms a column rename survives reload and sign-in.

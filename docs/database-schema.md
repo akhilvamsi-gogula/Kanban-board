@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed for Part 5. Persistence and API implementation must wait for user sign-off on this document.
+Approved for Part 5 and implemented in Parts 6 and 7. Future schema changes still require review and a versioned migration decision.
 
 ## Goals
 
@@ -128,7 +128,7 @@ A future recovery command may copy the invalid file to a timestamped `.corrupt` 
 
 ## Review Decisions Required
 
-Please approve or change these decisions before Part 6:
+These decisions were approved before Part 6:
 
 1. Normalized top-level collections versus nested boards and cards.
 2. One board per user with exactly five columns.
