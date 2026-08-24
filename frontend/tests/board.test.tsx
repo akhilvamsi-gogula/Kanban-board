@@ -1,6 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { Board, reorderCards } from "../components/board";
 import { initialColumns } from "../lib/initial-data";
 
@@ -66,4 +66,62 @@ describe("Board", () => {
     expect(reordered.map((card) => card.id)).toEqual(["review-analytics", "map-user-journey"]);
   });
 
+  describe("AI undo", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("reverts the last AI board update locally, without asking the AI to reconstruct it", async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          assistant_message: "Moved every card to Done.",
+          board_update: {
+            name: "Q3 product launch",
+            columns: initialColumns.map((column, index) => ({
+              id: column.id,
+              name: column.name,
+              accent: column.accent,
+              position: index,
+              cards: column.id === "done" ? initialColumns.flatMap((c) => c.cards).map((card, i) => ({ ...card, position: i })) : [],
+            })),
+          },
+        }),
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+
+      await user.type(screen.getByLabelText("Ask the board assistant"), "move all boards to done");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(await within(screen.getByRole("region", { name: "Done" })).findByText("Map the user journey")).toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Backlog" })).queryByText("Map the user journey")).not.toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      await user.type(screen.getByLabelText("Ask the board assistant"), "undo the action");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(await within(screen.getByRole("region", { name: "Backlog" })).findByText("Map the user journey")).toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Done" })).queryByText("Map the user journey")).not.toBeInTheDocument();
+      expect(screen.getByText("Reverted the last board update I made.")).toBeInTheDocument();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("tells the user there is nothing to undo when no AI update has been applied yet", async () => {
+      const user = userEvent.setup();
+      const fetchMock = vi.fn();
+      vi.stubGlobal("fetch", fetchMock);
+
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+      await user.type(screen.getByLabelText("Ask the board assistant"), "undo");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(screen.getByText("There's nothing from me to undo yet.")).toBeInTheDocument();
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
 });

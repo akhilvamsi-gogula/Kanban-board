@@ -9,7 +9,7 @@ Part 6 adds the user-scoped Kanban API:
 
 AI routes:
 
-- `GET /api/ai/check` performs a small OpenRouter connectivity check.
+- `GET /api/ai/check` performs a small Groq connectivity check.
 - `POST /api/ai/chat` accepts board context, a prompt, and limited chat history, then returns structured assistant text and an optional board update.
 
 The seeded demo user is `demo-user`. The JSON store is created at `backend/data/kanban.json` by default. Set `KANBAN_DATA_PATH` to use a different local path during development or tests.
@@ -23,7 +23,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Set `OPENROUTER_API_KEY` in that local file. Never expose it through a `NEXT_PUBLIC_` variable, source code, tests, logs, or committed files. The default model is `openai/gpt-oss-20b:free`; free-model usage is subject to OpenRouter credits and rate limits.
+Set `GROQ_API_KEY` in that local file (get a free key at [console.groq.com](https://console.groq.com/keys), no credit card required). Never expose it through a `NEXT_PUBLIC_` variable, source code, tests, logs, or committed files. `/api/ai/*` has no authentication of its own, so it's rate-limited in-app to protect Groq's daily free-tier quota. The default model is `openai/gpt-oss-20b`.
 
 ## Direct run
 

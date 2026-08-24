@@ -32,7 +32,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Open `.env` and set `OPENROUTER_API_KEY` if you want to use the AI co-pilot. Never put the key in `frontend/.env.local`, a `NEXT_PUBLIC_` variable, source code, tests, screenshots, or commit history. `.env` is ignored by Git.
+Open `.env` and set `GROQ_API_KEY` if you want to use the AI co-pilot (get a free key at [console.groq.com](https://console.groq.com/keys) — no credit card required). Never put the key in `frontend/.env.local`, a `NEXT_PUBLIC_` variable, source code, tests, screenshots, or commit history. `.env` is ignored by Git.
 
 ## Start With Docker
 
@@ -96,17 +96,21 @@ Refreshing resets the demo sign-in state but does not reset the stored board dat
 
 ## AI Co-Pilot
 
-The browser never calls OpenRouter directly. Only the FastAPI backend reads `OPENROUTER_API_KEY`.
+The browser never calls Groq directly. Only the FastAPI backend reads `GROQ_API_KEY`.
 
 ```env
-OPENROUTER_API_KEY=your_local_key
-OPENROUTER_MODEL=openai/gpt-oss-20b:free
-OPENROUTER_TIMEOUT_MS=15000
+GROQ_API_KEY=your_local_key
+GROQ_MODEL=openai/gpt-oss-20b
+GROQ_TIMEOUT_MS=15000
 ```
 
-The default free model is subject to OpenRouter rate limits and account credits. A quota error does not prevent normal Kanban use; close the assistant and continue using the board. You can choose another available model by changing `OPENROUTER_MODEL` locally.
+Groq hosts OpenAI's open-weight `gpt-oss` models on its own inference hardware with a genuinely free tier (no credit card, no shared-pool congestion like typical free-tier aggregator models). The default model, `openai/gpt-oss-20b`, uses `reasoning_effort: "low"` to keep responses fast. Groq's free tier is still rate-limited (requests/tokens per minute, requests per day); a quota or provider error does not prevent normal Kanban use — close the assistant and continue using the board.
 
-AI requests include the current board and a limited conversation history. The backend validates structured responses before the frontend applies a board update. Do not send passwords, API keys, or unrelated private information in chat prompts.
+`/api/ai/chat` and `/api/ai/check` have no authentication of their own; they're rate-limited in-app to 10 requests/minute per client so a caller who bypasses the frontend sign-in can't burn through Groq's daily free quota on its own.
+
+AI requests include the current board and a limited conversation history. The backend caps `max_tokens` per request and validates structured responses before the frontend applies a board update. Do not send passwords, API keys, or unrelated private information in chat prompts.
+
+Ask the assistant to `undo` to revert the most recent board change it made. This is handled entirely on the frontend from a saved snapshot (no request to Groq) — the assistant is never shown prior board states, so it can't reconstruct an earlier layout on its own.
 
 To check provider connectivity:
 
@@ -161,7 +165,7 @@ If using port 8001, restart Next.js with `KANBAN_BACKEND_URL=http://127.0.0.1:80
 
 ### The AI assistant reports a rate limit or credit error
 
-This is an OpenRouter account or model quota limitation, not a Kanban board failure. Wait for the quota window to reset, add credits, or select another available model in `.env`.
+This is a Groq account or model quota limitation, not a Kanban board failure. Wait for the quota window to reset, or select another available model in `.env`.
 
 ### Reset the local board data
 

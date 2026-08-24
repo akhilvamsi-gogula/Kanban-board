@@ -16,6 +16,8 @@ export function reorderCards(cards: Card[], activeId: string, overId: string): C
   return oldIndex < 0 || newIndex < 0 ? cards : arrayMove(cards, oldIndex, newIndex);
 }
 
+const UNDO_REQUEST_PATTERN = /\bundo\b/i;
+
 type BoardProps = {
   columns?: Column[];
   boardName?: string;
@@ -39,6 +41,7 @@ export function Board({ columns: controlledColumns, boardName = "Q3 product laun
   const [assistantMessages, setAssistantMessages] = useState<AiMessage[]>([
     { role: "assistant", content: "Ask me to rename a column, add a task, or update the board." },
   ]);
+  const [preAiUpdateState, setPreAiUpdateState] = useState<{ columns: Column[]; boardName: string } | null>(null);
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   function updateColumns(nextColumns: Column[], previousColumns: Column[]) {
     if (!controlledColumns) setLocalColumns(nextColumns);
@@ -71,10 +74,24 @@ export function Board({ columns: controlledColumns, boardName = "Q3 product laun
     if (!trimmedPrompt || isAssistantLoading) return;
 
     const userMessage: AiMessage = { role: "user", content: trimmedPrompt };
-    const nextHistory = [...assistantMessages, userMessage];
-    setAssistantMessages(nextHistory);
+    setAssistantMessages((current) => [...current, userMessage]);
     setAssistantDraft("");
     setAssistantError(null);
+
+    // The AI is never shown prior board states, only the current one plus text history, so it
+    // cannot reconstruct an earlier layout — "undo" is handled locally from a real snapshot instead.
+    if (UNDO_REQUEST_PATTERN.test(trimmedPrompt)) {
+      if (preAiUpdateState) {
+        onBoardNameChange?.(preAiUpdateState.boardName);
+        updateColumns(preAiUpdateState.columns, columns);
+        setPreAiUpdateState(null);
+        setAssistantMessages((current) => [...current, { role: "assistant", content: "Reverted the last board update I made." }]);
+      } else {
+        setAssistantMessages((current) => [...current, { role: "assistant", content: "There's nothing from me to undo yet." }]);
+      }
+      return;
+    }
+
     setIsAssistantLoading(true);
 
     try {
@@ -91,6 +108,7 @@ export function Board({ columns: controlledColumns, boardName = "Q3 product laun
 
       setAssistantMessages((current) => [...current, { role: "assistant", content: response.assistant_message }]);
       if (response.board_update) {
+        setPreAiUpdateState({ columns, boardName });
         applyAiBoardUpdate(response.board_update);
       }
     } catch (error) {
