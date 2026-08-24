@@ -26,6 +26,7 @@
 - Uses Vitest and Testing Library for unit/component tests
 - Uses Playwright for browser workflow and responsive tests
 - Uses OpenRouter through a backend-only integration with `openai/gpt-oss-20b:free` by default
+- Backend dependencies are managed with uv (`pyproject.toml` / `uv.lock`), not pip/requirements.txt
 - As simple as possible but with an elegant UI
 
 ## Color Scheme
@@ -63,7 +64,7 @@ npm run test:e2e
 Run backend checks from `backend`:
 
 ```bash
-.venv/bin/python -m pytest -q
+uv run pytest -q
 ```
 
 Playwright requires browser binaries and compatible system libraries. If browser launch fails with missing Linux libraries, report the environment limitation separately from application test failures.

@@ -4,8 +4,8 @@ The `backend/` directory contains the FastAPI service for board persistence and 
 
 - `app/main.py` owns the health endpoint, smoke-test page, board API, OpenRouter connectivity check, and structured chat endpoint.
 - `tests/` contains backend unit tests using FastAPI's `TestClient`.
-- `requirements.txt` pins the runtime and test dependencies.
-- `Dockerfile` builds the service for the repository Compose setup.
+- `pyproject.toml` / `uv.lock` pin runtime and dev dependencies; managed with uv (`uv sync`, `uv run ...`), not pip.
+- `Dockerfile` builds the service for the repository Compose setup, using the uv base image to install dependencies.
 - `README.md` documents direct Python and Docker startup paths.
 
 - Board data is persisted through the repository boundary in the local JSON store; tests use temporary stores.

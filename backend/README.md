@@ -29,10 +29,11 @@ Set `OPENROUTER_API_KEY` in that local file. Never expose it through a `NEXT_PUB
 
 ```bash
 cd backend
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv sync
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+`uv sync` creates `.venv` and installs pinned dependencies from `uv.lock`.
 
 Open http://127.0.0.1:8000/.
 
@@ -40,7 +41,7 @@ Open http://127.0.0.1:8000/.
 
 ```bash
 cd backend
-.venv/bin/python -m pytest
+uv run pytest
 ```
 
 ## Docker

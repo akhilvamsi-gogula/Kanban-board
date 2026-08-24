@@ -20,6 +20,7 @@ The demo sign-in is not production authentication. The local JSON store is inten
 
 - Node.js 20 or later and npm
 - Python 3.12 or later
+- [uv](https://docs.astral.sh/uv/) for the backend
 - Docker Compose, optional but recommended for the backend
 
 ## First-Time Setup
@@ -53,14 +54,15 @@ Open `http://localhost:3000`, or use the forwarded port URL supplied by Codespac
 
 ## Start Without Docker
 
-Create the Python environment and install backend dependencies:
+Install backend dependencies and run the API with uv:
 
 ```bash
 cd backend
-python3 -m venv .venv
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+uv sync
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
+
+`uv sync` creates `backend/.venv` and installs pinned dependencies from `uv.lock` automatically; there is no separate `pip install` step.
 
 In a second terminal:
 
@@ -74,7 +76,7 @@ If port 8000 is occupied, use another backend port and configure the frontend be
 
 ```bash
 cd backend
-.venv/bin/python -m uvicorn app.main:app --host 127.0.0.1 --port 8001
+uv run uvicorn app.main:app --host 127.0.0.1 --port 8001
 ```
 
 ```bash
@@ -140,7 +142,7 @@ Backend:
 
 ```bash
 cd backend
-.venv/bin/python -m pytest -q
+uv run pytest -q
 ```
 
 Playwright requires browser binaries and compatible system libraries. Live AI browser tests also require provider availability and consume quota, so AI behavior is primarily covered with mocked provider tests.
