@@ -20,12 +20,14 @@
 - The interactive board is client-only; board reads and writes use the FastAPI service after demo sign-in
 - Refresh resets the demo sign-in state, while the backend JSON store retains board changes
 - Demo sign-in uses `user` / `password`; it is not production authentication
-- The optional AI co-pilot sends board context to OpenRouter only through the backend
+- The optional AI co-pilot sends board context to Groq only through the backend
+- Asking the AI co-pilot to "undo" reverts its last board change locally from a saved snapshot, without another Groq request
 - Uses dnd-kit for pointer and keyboard drag-and-drop
 - Uses lucide-react for interface icons
 - Uses Vitest and Testing Library for unit/component tests
 - Uses Playwright for browser workflow and responsive tests
-- Uses OpenRouter through a backend-only integration with `openai/gpt-oss-20b:free` by default
+- Uses Groq (api.groq.com, OpenAI-compatible) through a backend-only integration with `openai/gpt-oss-20b` by default — free tier, no billing required
+- Backend dependencies are managed with uv (`pyproject.toml` / `uv.lock`), not pip/requirements.txt
 - As simple as possible but with an elegant UI
 
 ## Color Scheme
@@ -63,7 +65,7 @@ npm run test:e2e
 Run backend checks from `backend`:
 
 ```bash
-.venv/bin/python -m pytest -q
+uv run pytest -q
 ```
 
 Playwright requires browser binaries and compatible system libraries. If browser launch fails with missing Linux libraries, report the environment limitation separately from application test failures.

@@ -1,4 +1,7 @@
+import asyncio
+
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from app import main
@@ -7,6 +10,12 @@ from app.repository import KanbanRepository
 
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def reset_ai_rate_limit():
+    main._ai_request_log.clear()
+    yield
 
 
 def test_health_endpoint() -> None:
@@ -94,16 +103,16 @@ def test_structurally_invalid_database_returns_server_error(tmp_path, monkeypatc
 
 
 def test_ai_health_check_requires_api_key(monkeypatch) -> None:
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
 
     response = client.get("/api/ai/check")
 
     assert response.status_code == 503
-    assert "OPENROUTER_API_KEY" in response.json()["detail"]
+    assert "GROQ_API_KEY" in response.json()["detail"]
 
 
 def test_ai_chat_requires_prompt(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
 
     response = client.post("/api/ai/chat", json={"prompt": "   "})
 
@@ -131,8 +140,8 @@ def test_ai_chat_accepts_api_board_shape() -> None:
 
 
 def test_ai_chat_succeeds_with_valid_provider_response(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
     class FakeResponse:
         status_code = 200
@@ -142,16 +151,16 @@ def test_ai_chat_succeeds_with_valid_provider_response(monkeypatch) -> None:
                 "choices": [{"message": {"content": '{"assistant_message":"I can rename the backlog.","board_update":{"columns":[{"id":"backlog","name":"Ideas"}]}}'}}]
             }
 
-    def fake_post(url: str, *, headers: dict[str, str], json: dict, timeout: float) -> FakeResponse:
-        assert url == "https://openrouter.ai/api/v1/chat/completions"
+    async def fake_post(self, url: str, *, headers: dict[str, str], json: dict) -> FakeResponse:
+        assert url == "https://api.groq.com/openai/v1/chat/completions"
         assert headers["Authorization"] == "Bearer test-key"
-        assert json["model"] == "openai/gpt-oss-20b:free"
+        assert json["model"] == "openai/gpt-oss-20b"
         assert json["messages"][0]["content"].startswith("You are a Kanban assistant")
-        assert json["reasoning"] == {"exclude": True}
-        assert timeout == 15.0
+        assert json["reasoning_effort"] == "medium"
+        assert json["include_reasoning"] is False
         return FakeResponse()
 
-    monkeypatch.setattr(main.httpx, "post", fake_post)
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
 
     response = client.post(
         "/api/ai/chat",
@@ -176,9 +185,112 @@ def test_ai_chat_succeeds_with_valid_provider_response(monkeypatch) -> None:
     assert body["board_update"]["columns"][0]["name"] == "Ideas"
 
 
+def test_ai_chat_retries_once_on_malformed_response_then_succeeds(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        def __init__(self, content: str) -> None:
+            self.status_code = 200
+            self._content = content
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return FakeResponse('{"assistant_message": "broken", "board_update": [not valid json')
+        return FakeResponse('{"assistant_message": "Got it.", "board_update": null}')
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.post("/api/ai/chat", json={"prompt": "rename something"})
+
+    assert response.status_code == 200
+    assert response.json()["assistant_message"] == "Got it."
+    assert call_count["n"] == 2
+
+
+def test_ai_chat_fails_after_exhausting_retries_on_malformed_response(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": "[not valid json"}}]}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        call_count["n"] += 1
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.post("/api/ai/chat", json={"prompt": "rename something"})
+
+    assert response.status_code == 502
+    assert "malformed" in response.json()["detail"].lower()
+    assert call_count["n"] == 2
+
+
+def test_ai_chat_retries_when_assistant_claims_a_change_without_board_update(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        def __init__(self, content: str) -> None:
+            self.status_code = 200
+            self._content = content
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return FakeResponse('{"assistant_message": "Moved the cards to Backlog.", "board_update": null}')
+        return FakeResponse(
+            '{"assistant_message": "Moved the cards to Backlog.", '
+            '"board_update": {"columns": [{"id": "backlog", "cards": [{"id": "c1", "title": "x", "details": "", "position": 0}]}]}}'
+        )
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.post("/api/ai/chat", json={"prompt": "move the cards to backlog"})
+
+    assert response.status_code == 200
+    assert response.json()["board_update"] is not None
+    assert call_count["n"] == 2
+
+
+def test_ai_chat_does_not_retry_when_no_change_was_claimed(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"assistant_message": "There are 3 cards on the board.", "board_update": null}'}}]}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        call_count["n"] += 1
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.post("/api/ai/chat", json={"prompt": "how many cards are there?"})
+
+    assert response.status_code == 200
+    assert response.json()["board_update"] is None
+    assert call_count["n"] == 1
+
+
 def test_ai_health_check_succeeds_with_valid_provider_response(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
-    monkeypatch.setenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_MODEL", "openai/gpt-oss-20b")
 
     class FakeResponse:
         status_code = 200
@@ -186,16 +298,15 @@ def test_ai_health_check_succeeds_with_valid_provider_response(monkeypatch) -> N
         def json(self):
             return {"choices": [{"message": {"content": "4"}}]}
 
-    def fake_post(url: str, *, headers: dict[str, str], json: dict, timeout: float) -> FakeResponse:
-        assert url == "https://openrouter.ai/api/v1/chat/completions"
+    async def fake_post(self, url: str, *, headers: dict[str, str], json: dict) -> FakeResponse:
+        assert url == "https://api.groq.com/openai/v1/chat/completions"
         assert headers["Authorization"] == "Bearer test-key"
         assert headers["Content-Type"] == "application/json"
-        assert json["model"] == "openai/gpt-oss-20b:free"
+        assert json["model"] == "openai/gpt-oss-20b"
         assert json["messages"][0]["content"] == "Compute 2 + 2 and answer only with a single number."
-        assert timeout == 15.0
         return FakeResponse()
 
-    monkeypatch.setattr(main.httpx, "post", fake_post)
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
 
     response = client.get("/api/ai/check")
 
@@ -203,8 +314,28 @@ def test_ai_health_check_succeeds_with_valid_provider_response(monkeypatch) -> N
     assert response.json() == {"ok": True, "answer": "4"}
 
 
+def test_ai_health_check_surfaces_provider_error_detail(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    class FakeResponse:
+        status_code = 402
+
+        def json(self):
+            return {"error": {"message": "Insufficient credits.", "code": 402}}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.get("/api/ai/check")
+
+    assert response.status_code == 502
+    assert response.json() == {"detail": "Insufficient credits."}
+
+
 def test_ai_health_check_rejects_malformed_provider_response(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
 
     class FakeResponse:
         status_code = 200
@@ -212,7 +343,10 @@ def test_ai_health_check_rejects_malformed_provider_response(monkeypatch) -> Non
         def json(self):
             return {"bad": "shape"}
 
-    monkeypatch.setattr(main.httpx, "post", lambda *args, **kwargs: FakeResponse())
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
 
     response = client.get("/api/ai/check")
 
@@ -221,12 +355,38 @@ def test_ai_health_check_rejects_malformed_provider_response(monkeypatch) -> Non
 
 
 def test_ai_health_check_handles_provider_timeout(monkeypatch) -> None:
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
 
-    def fake_post(*args, **kwargs):
+    async def fake_post(self, *args, **kwargs):
         raise httpx.TimeoutException("timed out")
 
-    monkeypatch.setattr(main.httpx, "post", fake_post)
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.get("/api/ai/check")
+
+    assert response.status_code == 504
+    assert "timed out" in response.json()["detail"].lower()
+
+
+def test_ai_rate_limit_blocks_excess_requests(monkeypatch) -> None:
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+    monkeypatch.setattr(main, "AI_RATE_LIMIT_MAX_REQUESTS", 3)
+
+    responses = [client.get("/api/ai/check") for _ in range(4)]
+
+    assert [response.status_code for response in responses] == [503, 503, 503, 429]
+    assert "too many" in responses[-1].json()["detail"].lower()
+
+
+def test_ai_chat_handles_slow_provider_with_keepalive_bytes(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    monkeypatch.setenv("GROQ_TIMEOUT_MS", "50")
+
+    async def fake_post(self, *args, **kwargs):
+        await asyncio.sleep(0.2)
+        raise AssertionError("should have been cancelled by the enforced deadline")
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
 
     response = client.get("/api/ai/check")
 

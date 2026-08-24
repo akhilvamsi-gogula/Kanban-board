@@ -1,9 +1,13 @@
+import asyncio
 import os
+import re
+import time
+from collections import defaultdict, deque
 from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 import json
@@ -50,6 +54,44 @@ SMOKE_TEST_PAGE = """<!doctype html>
 </html>"""
 
 
+CLAIMED_CHANGE_PATTERN = re.compile(r"\b(moved|added|created|deleted|removed|renamed|updated|reordered)\b", re.IGNORECASE)
+
+AI_RATE_LIMIT_MAX_REQUESTS = 10
+AI_RATE_LIMIT_WINDOW_SECONDS = 60
+_ai_request_log: dict[str, deque[float]] = defaultdict(deque)
+
+
+def enforce_ai_rate_limit(request: Request) -> None:
+    # /api/ai/* has no authentication, so this is the only guard against a caller
+    # who bypasses the frontend sign-in and hits the endpoint directly and burns through Groq's daily free quota.
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    timestamps = _ai_request_log[client_ip]
+    while timestamps and now - timestamps[0] > AI_RATE_LIMIT_WINDOW_SECONDS:
+        timestamps.popleft()
+    if len(timestamps) >= AI_RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(status_code=429, detail="Too many AI requests. Please wait a moment and try again.")
+    timestamps.append(now)
+
+
+async def call_groq(payload: dict, api_key: str, timeout_ms: int) -> httpx.Response:
+    timeout_seconds = timeout_ms / 1000
+    async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+        try:
+            return await asyncio.wait_for(
+                client.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                    json=payload,
+                ),
+                timeout=timeout_seconds,
+            )
+        except (TimeoutError, httpx.TimeoutException) as error:
+            raise HTTPException(status_code=504, detail=f"Groq request timed out after {timeout_ms}ms.") from error
+        except httpx.HTTPError as error:
+            raise HTTPException(status_code=502, detail=f"Groq request failed: {error}") from error
+
+
 @app.get("/", response_class=HTMLResponse)
 def smoke_test_page() -> str:
     return SMOKE_TEST_PAGE
@@ -65,56 +107,52 @@ def hello() -> dict[str, str]:
     return {"message": "Hello from the Kanban backend"}
 
 
-@app.get("/api/ai/check")
-def ai_connectivity_check() -> dict[str, object]:
-    api_key = os.getenv("OPENROUTER_API_KEY")
+@app.get("/api/ai/check", dependencies=[Depends(enforce_ai_rate_limit)])
+async def ai_connectivity_check() -> dict[str, object]:
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY is not configured.")
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured.")
 
-    model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
-    timeout_ms = int(os.getenv("OPENROUTER_TIMEOUT_MS", "15000"))
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+    timeout_ms = int(os.getenv("GROQ_TIMEOUT_MS", "15000"))
     prompt = "Compute 2 + 2 and answer only with a single number."
 
-    try:
-        response = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-            timeout=timeout_ms / 1000,
-        )
-    except httpx.TimeoutException as error:
-        raise HTTPException(status_code=504, detail=f"OpenRouter request timed out after {timeout_ms}ms.") from error
-    except httpx.HTTPError as error:
-        raise HTTPException(status_code=502, detail=f"OpenRouter request failed: {error}") from error
+    response = await call_groq(
+        {"model": model, "messages": [{"role": "user", "content": prompt}], "reasoning_effort": "low", "include_reasoning": False, "max_tokens": 100},
+        api_key,
+        timeout_ms,
+    )
+
+    if response.status_code >= 400:
+        try:
+            detail = response.json()["error"]["message"]
+        except (KeyError, TypeError, ValueError):
+            detail = f"Groq returned HTTP {response.status_code}."
+        raise HTTPException(status_code=502, detail=detail)
 
     try:
         payload = response.json()
         content = payload["choices"][0]["message"]["content"]
+        if content is None:
+            raise ValueError("empty content")
         answer = str(content).strip()
     except (KeyError, IndexError, TypeError, ValueError):
-        raise HTTPException(status_code=502, detail="OpenRouter response was malformed.") from None
+        raise HTTPException(status_code=502, detail="Groq response was malformed.") from None
 
     if not answer:
-        raise HTTPException(status_code=502, detail="OpenRouter response was malformed.")
+        raise HTTPException(status_code=502, detail="Groq response was malformed.")
 
     return {"ok": True, "answer": answer}
 
 
-@app.post("/api/ai/chat", response_model=AiChatResponse)
-def ai_chat(payload: AiChatRequest) -> AiChatResponse:
-    api_key = os.getenv("OPENROUTER_API_KEY")
+@app.post("/api/ai/chat", response_model=AiChatResponse, dependencies=[Depends(enforce_ai_rate_limit)])
+async def ai_chat(payload: AiChatRequest) -> AiChatResponse:
+    api_key = os.getenv("GROQ_API_KEY")
     if not api_key:
-        raise HTTPException(status_code=503, detail="OPENROUTER_API_KEY is not configured.")
+        raise HTTPException(status_code=503, detail="GROQ_API_KEY is not configured.")
 
-    model = os.getenv("OPENROUTER_MODEL", "openai/gpt-oss-20b:free")
-    timeout_ms = int(os.getenv("OPENROUTER_TIMEOUT_MS", "15000"))
-    timeout_seconds = timeout_ms / 1000
+    model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
+    timeout_ms = int(os.getenv("GROQ_TIMEOUT_MS", "15000"))
 
     board_payload = payload.board.model_dump(mode="json") if payload.board else None
     history_payload = [message.model_dump(mode="json") for message in payload.history[-8:]]
@@ -123,9 +161,12 @@ def ai_chat(payload: AiChatRequest) -> AiChatResponse:
         "You are a Kanban assistant. Reply with JSON only and never send markdown. "
         "The JSON must have exactly two fields: assistant_message and optional board_update. "
         "If the user asks for a board change, include a valid board_update object using the same schema as the current board. "
-        "Only make safe edits to the existing board: rename columns, rename cards, add or remove cards, and reorder cards within or across columns. "
-        "Never invent new cards, IDs, or columns. Preserve all existing card IDs. "
-        "If no board change is needed, omit board_update."
+        "Only make safe edits to the existing board: rename columns, add/rename/remove cards, and reorder cards within or across columns. "
+        "There are always exactly 5 columns; never invent, remove, or rename a column's id, only its name. "
+        "When adding a new card, invent a short new id for it: lowercase letters, digits, and hyphens only, starting with a letter, not already used by any existing card or column. "
+        "Preserve the id of every existing card and column you are not removing. "
+        "If no board change is needed, omit board_update. "
+        "If assistant_message describes a change you made, board_update must be included and reflect that exact change — never claim a change without including it."
     )
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -135,65 +176,73 @@ def ai_chat(payload: AiChatRequest) -> AiChatResponse:
     if board_payload is not None:
         messages.append({"role": "user", "content": f"Current board JSON: {board_payload}"})
 
-    try:
-        response = httpx.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": model,
-                "messages": messages,
-                "reasoning": {"exclude": True},
-            },
-            timeout=timeout_seconds,
+    max_attempts = 2
+    for attempt in range(1, max_attempts + 1):
+        response = await call_groq(
+            {"model": model, "messages": messages, "reasoning_effort": "medium", "include_reasoning": False, "max_tokens": 1500},
+            api_key,
+            timeout_ms,
         )
-    except httpx.TimeoutException as error:
-        raise HTTPException(status_code=504, detail=f"OpenRouter request timed out after {timeout_ms}ms.") from error
-    except httpx.HTTPError as error:
-        raise HTTPException(status_code=502, detail=f"OpenRouter request failed: {error}") from error
 
-    if response.status_code == 429:
-        raise HTTPException(status_code=429, detail="OpenRouter rate limit reached. Please try again shortly.")
-    if response.status_code >= 400:
-        raise HTTPException(status_code=502, detail=f"OpenRouter returned HTTP {response.status_code}.")
+        if response.status_code == 429:
+            raise HTTPException(status_code=429, detail="Groq rate limit reached. Please try again shortly.")
+        if response.status_code >= 400:
+            try:
+                detail = response.json()["error"]["message"]
+            except (KeyError, TypeError, ValueError):
+                detail = f"Groq returned HTTP {response.status_code}."
+            raise HTTPException(status_code=502, detail=detail)
 
-    try:
-        payload_json = response.json()
-        content = payload_json["choices"][0]["message"]["content"]
-        parsed = json.loads(str(content).strip())
-    except (KeyError, IndexError, TypeError, ValueError):
-        raise HTTPException(status_code=502, detail="OpenRouter response was malformed.") from None
+        # Small/fast models occasionally emit invalid JSON or skip board_update despite
+        # instructions; one retry resolves most of these transient generation failures.
+        is_last_attempt = attempt == max_attempts
+        try:
+            payload_json = response.json()
+            content = payload_json["choices"][0]["message"]["content"]
+            if content is None:
+                raise ValueError("empty content")
+            parsed = json.loads(str(content).strip())
+        except (KeyError, IndexError, TypeError, ValueError):
+            if is_last_attempt:
+                raise HTTPException(status_code=502, detail="Groq response was malformed.") from None
+            continue
 
-    try:
-        assistant_message = str(parsed["assistant_message"]).strip()
-        if not assistant_message:
-            raise ValueError("missing message")
-        board_update = parsed.get("board_update")
-        if board_update is not None:
-            if not isinstance(board_update, dict):
-                raise ValueError("board_update must be an object")
-            if "name" in board_update:
-                name = board_update["name"]
-                if not isinstance(name, str) or not name.strip():
-                    raise ValueError("board name must be a non-empty string")
-            if "columns" in board_update:
-                columns = board_update["columns"]
-                if not isinstance(columns, list) or not columns:
-                    raise ValueError("columns must be a non-empty array")
-                for column in columns:
-                    if not isinstance(column, dict):
-                        raise ValueError("column updates must be objects")
-                    column_id = column.get("id")
-                    if not isinstance(column_id, str) or not column_id.strip():
-                        raise ValueError("column updates require a non-empty id")
-                    name = column.get("name")
-                    if name is not None and (not isinstance(name, str) or not name.strip()):
-                        raise ValueError("column names must be non-empty strings")
-        return AiChatResponse(assistant_message=assistant_message, board_update=board_update)
-    except (KeyError, TypeError, ValueError, ValidationError):
-        raise HTTPException(status_code=502, detail="OpenRouter returned an invalid board update.") from None
+        try:
+            assistant_message = str(parsed["assistant_message"]).strip()
+            if not assistant_message:
+                raise ValueError("missing message")
+            board_update = parsed.get("board_update")
+            if board_update is None and CLAIMED_CHANGE_PATTERN.search(assistant_message):
+                # The model sometimes claims it made a change (per the instruction above) but
+                # omits board_update anyway; treat that as a failed generation and retry it.
+                raise ValueError("assistant claimed a change without including board_update")
+            if board_update is not None:
+                if not isinstance(board_update, dict):
+                    raise ValueError("board_update must be an object")
+                if "name" in board_update:
+                    name = board_update["name"]
+                    if not isinstance(name, str) or not name.strip():
+                        raise ValueError("board name must be a non-empty string")
+                if "columns" in board_update:
+                    columns = board_update["columns"]
+                    if not isinstance(columns, list) or not columns:
+                        raise ValueError("columns must be a non-empty array")
+                    for column in columns:
+                        if not isinstance(column, dict):
+                            raise ValueError("column updates must be objects")
+                        column_id = column.get("id")
+                        if not isinstance(column_id, str) or not column_id.strip():
+                            raise ValueError("column updates require a non-empty id")
+                        name = column.get("name")
+                        if name is not None and (not isinstance(name, str) or not name.strip()):
+                            raise ValueError("column names must be non-empty strings")
+            return AiChatResponse(assistant_message=assistant_message, board_update=board_update)
+        except (KeyError, TypeError, ValueError, ValidationError):
+            if is_last_attempt:
+                raise HTTPException(status_code=502, detail="Groq returned an invalid board update.") from None
+            continue
+
+    raise AssertionError("unreachable")
 
 
 @app.get("/api/users/{user_id}/board", response_model=BoardResponse)
