@@ -64,6 +64,47 @@ class BoardResponse(BoardUpdate):
     owner_id: str
 
 
+class SignupRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=3, max_length=32, pattern=r"^[a-zA-Z0-9_-]{3,32}$")
+    password: str = Field(min_length=8, max_length=128)
+
+
+class LoginRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=32)
+    password: str = Field(min_length=1, max_length=128)
+
+
+class UserResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    username: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: str = Field(min_length=1, max_length=32)
+
+
+class ForgotPasswordResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    message: str
+    reset_token: str | None = None
+
+
+class ResetPasswordRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    token: str = Field(min_length=1)
+    new_password: str = Field(min_length=8, max_length=128)
+
+
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

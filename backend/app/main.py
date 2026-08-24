@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 import json
@@ -15,13 +15,71 @@ from pydantic import ValidationError
 
 load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
-from .models import AiChatRequest, AiChatResponse, BoardResponse, BoardUpdate
-from .repository import DEFAULT_DATA_PATH, DataStoreError, KanbanRepository
+from .models import (
+    AiChatRequest,
+    AiChatResponse,
+    BoardResponse,
+    BoardUpdate,
+    ForgotPasswordRequest,
+    ForgotPasswordResponse,
+    LoginRequest,
+    ResetPasswordRequest,
+    SignupRequest,
+    UserResponse,
+)
+from .repository import DEFAULT_DATA_PATH, DataStoreError, KanbanRepository, UsernameTakenError
 
 app = FastAPI(title="Kanban Backend", version="0.1.0")
 repository = KanbanRepository(Path(os.environ["KANBAN_DATA_PATH"]) if "KANBAN_DATA_PATH" in os.environ else DEFAULT_DATA_PATH)
 cors_origins = [origin for origin in os.getenv("KANBAN_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if origin]
-app.add_middleware(CORSMiddleware, allow_origins=cors_origins, allow_methods=["GET", "POST", "PUT"], allow_headers=["Content-Type"])
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=cors_origins,
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PUT"],
+    allow_headers=["Content-Type"],
+)
+
+SESSION_COOKIE_NAME = "kanban_session"
+SESSION_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+
+AUTH_RATE_LIMIT_MAX_REQUESTS = 20
+AUTH_RATE_LIMIT_WINDOW_SECONDS = 60
+_auth_request_log: dict[str, deque[float]] = defaultdict(deque)
+
+
+def enforce_auth_rate_limit(request: Request) -> None:
+    # Guards signup/login/forgot-password against brute-force and spam, since these
+    # endpoints are unauthenticated by definition.
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.monotonic()
+    timestamps = _auth_request_log[client_ip]
+    while timestamps and now - timestamps[0] > AUTH_RATE_LIMIT_WINDOW_SECONDS:
+        timestamps.popleft()
+    if len(timestamps) >= AUTH_RATE_LIMIT_MAX_REQUESTS:
+        raise HTTPException(status_code=429, detail="Too many requests. Please wait a moment and try again.")
+    timestamps.append(now)
+
+
+def get_current_user(kanban_session: str | None = Cookie(default=None)) -> UserResponse:
+    if kanban_session is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    user = repository.get_user_by_session(kanban_session)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+    return user
+
+
+def _set_session_cookie(response: Response, token: str) -> None:
+    response.set_cookie(
+        key=SESSION_COOKIE_NAME,
+        value=token,
+        max_age=SESSION_COOKIE_MAX_AGE_SECONDS,
+        httponly=True,
+        samesite="lax",
+        secure=False,
+        path="/",
+    )
 
 
 SMOKE_TEST_PAGE = """<!doctype html>
@@ -245,23 +303,67 @@ async def ai_chat(payload: AiChatRequest) -> AiChatResponse:
     raise AssertionError("unreachable")
 
 
-@app.get("/api/users/{user_id}/board", response_model=BoardResponse)
-def get_user_board(user_id: str) -> BoardResponse:
-  try:
-    board = repository.get_board(user_id)
-  except DataStoreError as error:
-    raise HTTPException(status_code=500, detail=str(error)) from error
-  if board is None:
-    raise HTTPException(status_code=404, detail="User not found")
-  return board
+@app.post("/api/auth/signup", response_model=UserResponse, status_code=201, dependencies=[Depends(enforce_auth_rate_limit)])
+def signup(payload: SignupRequest, response: Response) -> UserResponse:
+    try:
+        user = repository.create_user(payload.username, payload.password)
+    except UsernameTakenError as error:
+        raise HTTPException(status_code=409, detail="Username is already taken") from error
+    except DataStoreError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+    token = repository.create_session(user.id)
+    _set_session_cookie(response, token)
+    return user
 
 
-@app.put("/api/users/{user_id}/board", response_model=BoardResponse)
-def update_user_board(user_id: str, board: BoardUpdate) -> BoardResponse:
-  try:
-    updated_board = repository.save_board(user_id, board)
-  except DataStoreError as error:
-    raise HTTPException(status_code=500, detail=str(error)) from error
-  if updated_board is None:
-    raise HTTPException(status_code=404, detail="User not found")
-  return updated_board
+@app.post("/api/auth/login", response_model=UserResponse, dependencies=[Depends(enforce_auth_rate_limit)])
+def login(payload: LoginRequest, response: Response) -> UserResponse:
+    user = repository.authenticate_user(payload.username, payload.password)
+    if user is None:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    token = repository.create_session(user.id)
+    _set_session_cookie(response, token)
+    return user
+
+
+@app.post("/api/auth/logout")
+def logout(response: Response, kanban_session: str | None = Cookie(default=None)) -> dict[str, bool]:
+    if kanban_session is not None:
+        repository.delete_session(kanban_session)
+    response.delete_cookie(key=SESSION_COOKIE_NAME, path="/")
+    return {"ok": True}
+
+
+@app.get("/api/auth/me", response_model=UserResponse)
+def me(user: UserResponse = Depends(get_current_user)) -> UserResponse:
+    return user
+
+
+@app.post("/api/auth/forgot-password", response_model=ForgotPasswordResponse, dependencies=[Depends(enforce_auth_rate_limit)])
+def forgot_password(payload: ForgotPasswordRequest) -> ForgotPasswordResponse:
+    token = repository.create_password_reset(payload.username)
+    return ForgotPasswordResponse(message="If that account exists, a reset link has been generated.", reset_token=token)
+
+
+@app.post("/api/auth/reset-password", dependencies=[Depends(enforce_auth_rate_limit)])
+def reset_password(payload: ResetPasswordRequest) -> dict[str, bool]:
+    success = repository.reset_password(payload.token, payload.new_password)
+    if not success:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+    return {"ok": True}
+
+
+@app.get("/api/board", response_model=BoardResponse)
+def get_board(user: UserResponse = Depends(get_current_user)) -> BoardResponse:
+    try:
+        return repository.get_board(user.id)
+    except DataStoreError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.put("/api/board", response_model=BoardResponse)
+def update_board(board: BoardUpdate, user: UserResponse = Depends(get_current_user)) -> BoardResponse:
+    try:
+        return repository.save_board(user.id, board)
+    except DataStoreError as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error

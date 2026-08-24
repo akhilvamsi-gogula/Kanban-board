@@ -6,13 +6,19 @@
   <circle cx="90" cy="410" r="240" fill="#2a1d43" opacity=".28"/>
   <g font-family="Arial, sans-serif" fill="#f4f7fb">
     <text x="70" y="62" font-size="25" font-weight="700">Kanban board</text>
-    <text x="1235" y="60" font-size="14" fill="#9caabd">● Session only</text>
+    <text x="1235" y="60" font-size="14" fill="#9caabd">● Signed in as alex</text>
     <line x1="70" y1="88" x2="1370" y2="88" stroke="#264057"/>
     <text x="70" y="175" font-size="13" fill="#b36ad0" font-weight="700" letter-spacing="2">BOARD</text>
-    <text x="70" y="220" font-size="36" font-weight="700">Q3 product launch</text>
-    <text x="1120" y="211" font-size="14" fill="#9caabd">8 cards</text>
-    <rect x="1245" y="184" width="125" height="44" rx="5" fill="#f5bd27"/>
-    <text x="1270" y="212" font-size="14" fill="#071321" font-weight="700">+ Add card</text>
+    <text x="70" y="220" font-size="36" font-weight="700">My board</text>
+    <text x="900" y="211" font-size="14" fill="#9caabd">8 cards</text>
+    <rect x="990" y="184" width="104" height="44" rx="5" fill="#f5bd27"/>
+    <text x="1006" y="212" font-size="14" fill="#071321" font-weight="700">+ Add card</text>
+    <rect x="1110" y="172" width="250" height="68" rx="9" fill="#17324a" stroke="#3fb6e6" stroke-opacity=".6"/>
+    <rect x="1120" y="184" width="44" height="44" rx="8" fill="#f5bd27"/>
+    <text x="1142" y="212" font-size="20" text-anchor="middle" fill="#071321">✦</text>
+    <text x="1176" y="200" font-size="13" font-weight="700">AI co-pilot</text>
+    <text x="1176" y="214" font-size="10" fill="#c5d5e6">Ask or change your board</text>
+    <text x="1345" y="210" font-size="16" fill="#35b9ee">→</text>
   </g>
   <g transform="translate(70 260)">
     <g font-family="Arial, sans-serif">
