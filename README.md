@@ -1,20 +1,20 @@
 # Kanban Board
 
-A polished Kanban project-management app with one persistent board, five renameable columns, drag-and-drop cards, demo sign-in, and an optional AI co-pilot.
+A polished Kanban project-management app with per-user accounts, a private five-column board per account, drag-and-drop cards, and an optional AI co-pilot.
 
 ![Kanban board preview](docs/kanban-board-preview.svg)
 
 ## What It Does
 
-- Displays one board with five seeded columns and example cards.
+- Real accounts: sign up, sign in, sign out, and forgot/reset password.
+- Gives each account its own private board with five seeded columns.
 - Adds, edits, deletes, and reorders cards.
 - Moves cards between columns with pointer or keyboard drag-and-drop.
 - Renames columns.
-- Persists board changes in a local JSON store through FastAPI.
-- Provides demo sign-in with `user` / `password`.
+- Persists accounts and board changes in a local SQLite store through FastAPI.
 - Provides an optional AI co-pilot that can answer board questions and request safe board updates.
 
-The demo sign-in is not production authentication. The local JSON store is intended for development, not concurrent production use.
+Passwords are hashed (bcrypt) and sessions are real server-side sessions (httpOnly cookie), but this is still a local/single-instance app, not a production deployment — there's no real email delivery (password reset returns the reset link directly in the API response/UI instead of emailing it) and the SQLite store is intended for development, not concurrent production use.
 
 ## Requirements
 
@@ -87,12 +87,12 @@ KANBAN_BACKEND_URL=http://127.0.0.1:8001 npm run dev
 ## Using The App
 
 1. Open the frontend.
-2. Sign in with username `user` and password `password`.
+2. Create an account (username + password) — this seeds a private board for you.
 3. Use the board controls to add, edit, delete, rename, and move cards.
 4. Select the visible **AI co-pilot** control to open the assistant workspace.
 5. Try `How many cards are there?` or `Rename Backlog to Ideas`.
 
-Refreshing resets the demo sign-in state but does not reset the stored board data.
+Sessions persist across refresh (a real server-side session cookie, not client-only state) until you log out or the session expires (7 days). Forgot your password? Use **Forgot password?** on the sign-in screen — since there's no email provider configured, the reset link is shown directly on screen instead of being emailed.
 
 ## AI Co-Pilot
 
@@ -106,7 +106,7 @@ GROQ_TIMEOUT_MS=15000
 
 Groq hosts OpenAI's open-weight `gpt-oss` models on its own inference hardware with a genuinely free tier (no credit card, no shared-pool congestion like typical free-tier aggregator models). The default model, `openai/gpt-oss-20b`, uses `reasoning_effort: "low"` to keep responses fast. Groq's free tier is still rate-limited (requests/tokens per minute, requests per day); a quota or provider error does not prevent normal Kanban use — close the assistant and continue using the board.
 
-`/api/ai/chat` and `/api/ai/check` have no authentication of their own; they're rate-limited in-app to 10 requests/minute per client so a caller who bypasses the frontend sign-in can't burn through Groq's daily free quota on its own.
+`/api/ai/chat` and `/api/ai/check` have no authentication of their own (a signed-in session isn't required to call them directly); they're rate-limited in-app to 10 requests/minute per client so a caller who bypasses the frontend sign-in can't burn through Groq's daily free quota on its own.
 
 AI requests include the current board and a limited conversation history. The backend caps `max_tokens` per request and validates structured responses before the frontend applies a board update. Do not send passwords, API keys, or unrelated private information in chat prompts.
 
@@ -124,8 +124,14 @@ This requires a valid local key and consumes provider quota.
 
 - `GET /health` - backend health check
 - `GET /api/hello` - smoke-test response
-- `GET /api/users/demo-user/board` - read the seeded board
-- `PUT /api/users/demo-user/board` - save the board
+- `POST /api/auth/signup` - create an account (seeds a private board), sets the session cookie
+- `POST /api/auth/login` - sign in, sets the session cookie
+- `POST /api/auth/logout` - sign out, clears the session cookie
+- `GET /api/auth/me` - current signed-in user, or 401
+- `POST /api/auth/forgot-password` - request a password reset (returns the reset token directly, no email)
+- `POST /api/auth/reset-password` - complete a password reset with a token
+- `GET /api/board` - read the signed-in user's board (requires a session)
+- `PUT /api/board` - save the signed-in user's board (requires a session)
 - `GET /api/ai/check` - provider connectivity check
 - `POST /api/ai/chat` - structured board-aware assistant request
 
@@ -167,6 +173,6 @@ If using port 8001, restart Next.js with `KANBAN_BACKEND_URL=http://127.0.0.1:80
 
 This is a Groq account or model quota limitation, not a Kanban board failure. Wait for the quota window to reset, or select another available model in `.env`.
 
-### Reset the local board data
+### Reset all local accounts and board data
 
-Stop the backend, remove `backend/data/kanban.json`, and start the backend again. The seeded board will be recreated.
+Stop the backend, remove `backend/data/kanban.db` (and any `-wal`/`-shm` files next to it), and start the backend again. All accounts and boards are gone; the schema is recreated empty on next signup.

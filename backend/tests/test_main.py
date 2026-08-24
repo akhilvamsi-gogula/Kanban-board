@@ -13,8 +13,15 @@ client = TestClient(app)
 
 
 @pytest.fixture(autouse=True)
-def reset_ai_rate_limit():
+def reset_rate_limits():
     main._ai_request_log.clear()
+    main._auth_request_log.clear()
+    yield
+
+
+@pytest.fixture(autouse=True)
+def reset_session_cookie():
+    client.cookies.clear()
     yield
 
 
@@ -40,66 +47,140 @@ def test_smoke_test_page_calls_hello_endpoint() -> None:
     assert "/api/hello" in response.text
 
 
-def test_get_board_initializes_seeded_database(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.json"))
+def _signup(username: str = "alice", password: str = "correct-horse-battery") -> dict:
+    response = client.post("/api/auth/signup", json={"username": username, "password": password})
+    assert response.status_code == 201
+    return response.json()
 
-    response = client.get("/api/users/demo-user/board")
+
+def test_get_board_initializes_seeded_board(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+
+    response = client.get("/api/board")
 
     assert response.status_code == 200
     body = response.json()
-    assert body["name"] == "Q3 product launch"
+    assert body["name"] == "My board"
     assert len(body["columns"]) == 5
-    assert (tmp_path / "kanban.json").exists()
+    assert (tmp_path / "kanban.db").exists()
 
 
 def test_update_board_persists_column_and_card_changes(tmp_path, monkeypatch) -> None:
-    repository = KanbanRepository(tmp_path / "kanban.json")
-    monkeypatch.setattr(main, "repository", repository)
-    original = client.get("/api/users/demo-user/board").json()
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    original = client.get("/api/board").json()
     original["columns"][3]["name"] = "QA"
-    card = original["columns"][3]["cards"].pop()
-    card["position"] = 1
-    original["columns"][4]["cards"].append(card)
+    card = {"id": "qa-release", "title": "QA the release", "details": "", "position": 0}
+    original["columns"][3]["cards"] = [card]
     payload = {"name": original["name"], "columns": original["columns"]}
 
-    update_response = client.put("/api/users/demo-user/board", json=payload)
-    read_response = client.get("/api/users/demo-user/board")
+    update_response = client.put("/api/board", json=payload)
+    read_response = client.get("/api/board")
 
     assert update_response.status_code == 200
     assert read_response.json()["columns"][3]["name"] == "QA"
-    assert read_response.json()["columns"][4]["cards"][1]["id"] == "qa-release"
+    assert read_response.json()["columns"][3]["cards"][0]["id"] == "qa-release"
 
 
-def test_board_api_rejects_unknown_user_and_invalid_column_count(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.json"))
+def test_board_api_rejects_invalid_column_count(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
 
-    missing_response = client.get("/api/users/missing-user/board")
-    invalid_response = client.put("/api/users/demo-user/board", json={"name": "Bad", "columns": []})
+    invalid_response = client.put("/api/board", json={"name": "Bad", "columns": []})
 
-    assert missing_response.status_code == 404
     assert invalid_response.status_code == 422
 
 
-def test_corrupt_database_returns_server_error(tmp_path, monkeypatch) -> None:
-    database = tmp_path / "kanban.json"
-    database.write_text("{not valid json", encoding="utf-8")
-    monkeypatch.setattr(main, "repository", KanbanRepository(database))
+def test_board_endpoints_require_authentication(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
 
-    response = client.get("/api/users/demo-user/board")
+    get_response = client.get("/api/board")
+    put_response = client.put("/api/board", json={"name": "Bad", "columns": []})
+
+    assert get_response.status_code == 401
+    assert put_response.status_code == 401
+
+
+def test_corrupt_database_returns_server_error(tmp_path, monkeypatch) -> None:
+    database = tmp_path / "kanban.db"
+    monkeypatch.setattr(main, "repository", KanbanRepository(database))
+    database.write_bytes(b"not a sqlite database")
+
+    response = client.post("/api/auth/signup", json={"username": "bob", "password": "correct-horse-battery"})
 
     assert response.status_code == 500
     assert response.json() == {"detail": "Kanban database is unreadable"}
 
 
-def test_structurally_invalid_database_returns_server_error(tmp_path, monkeypatch) -> None:
-    database = tmp_path / "kanban.json"
-    database.write_text('{"schema_version": 1, "users": [], "boards": [], "columns": [], "cards": [], "extra": true}', encoding="utf-8")
-    monkeypatch.setattr(main, "repository", KanbanRepository(database))
+def test_signup_rejects_duplicate_username(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup(username="carol")
 
-    response = client.get("/api/users/demo-user/board")
+    response = client.post("/api/auth/signup", json={"username": "carol", "password": "another-password"})
 
-    assert response.status_code == 500
-    assert response.json() == {"detail": "Kanban database structure is invalid"}
+    assert response.status_code == 409
+
+
+def test_login_succeeds_with_correct_password_and_fails_with_wrong_one(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup(username="dave", password="right-password")
+    client.post("/api/auth/logout")
+
+    good_response = client.post("/api/auth/login", json={"username": "dave", "password": "right-password"})
+    client.post("/api/auth/logout")
+    bad_response = client.post("/api/auth/login", json={"username": "dave", "password": "wrong-password"})
+
+    assert good_response.status_code == 200
+    assert good_response.json()["username"] == "dave"
+    assert bad_response.status_code == 401
+
+
+def test_me_requires_authentication(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
+
+
+def test_logout_invalidates_session(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup(username="erin")
+
+    logout_response = client.post("/api/auth/logout")
+    me_response = client.get("/api/auth/me")
+
+    assert logout_response.status_code == 200
+    assert me_response.status_code == 401
+
+
+def test_forgot_password_for_unknown_user_returns_200_without_token(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+
+    response = client.post("/api/auth/forgot-password", json={"username": "nobody"})
+
+    assert response.status_code == 200
+    assert response.json()["reset_token"] is None
+
+
+def test_forgot_password_reset_then_login_flow(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup(username="frank", password="old-password")
+    client.post("/api/auth/logout")
+
+    forgot_response = client.post("/api/auth/forgot-password", json={"username": "frank"})
+    reset_token = forgot_response.json()["reset_token"]
+    assert reset_token is not None
+
+    reset_response = client.post("/api/auth/reset-password", json={"token": reset_token, "new_password": "new-password"})
+    old_password_response = client.post("/api/auth/login", json={"username": "frank", "password": "old-password"})
+    new_password_response = client.post("/api/auth/login", json={"username": "frank", "password": "new-password"})
+
+    assert forgot_response.status_code == 200
+    assert reset_response.status_code == 200
+    assert old_password_response.status_code == 401
+    assert new_password_response.status_code == 200
 
 
 def test_ai_health_check_requires_api_key(monkeypatch) -> None:

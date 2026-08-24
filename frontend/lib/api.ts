@@ -11,27 +11,82 @@ export type ApiBoard = {
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL ?? "/backend-api";
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function parseErrorDetail(response: Response): Promise<string> {
+  const body = await response.json().catch(() => null) as { detail?: string | Array<{ msg?: string; loc?: Array<string | number> }> } | null;
+  const detail = Array.isArray(body?.detail)
+    ? body.detail.map((item) => item.msg ?? "Invalid request").join("; ")
+    : body?.detail;
+  return detail ?? `Request failed (${response.status})`;
+}
+
+async function request<T>(path: string, options?: RequestInit & { parseJson?: boolean }): Promise<T> {
+  const { parseJson = true, ...init } = options ?? {};
   const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: { "Content-Type": "application/json", ...options?.headers },
+    ...init,
+    credentials: "include",
+    headers: { "Content-Type": "application/json", ...init.headers },
   });
-  if (!response.ok) {
-    const body = await response.json().catch(() => null) as { detail?: string | Array<{ msg?: string; loc?: Array<string | number> }> } | null;
-    const detail = Array.isArray(body?.detail)
-      ? body.detail.map((item) => item.msg ?? "Invalid request").join("; ")
-      : body?.detail;
-    throw new Error(detail ?? `Request failed (${response.status})`);
-  }
+  if (!response.ok) throw new Error(await parseErrorDetail(response));
+  if (!parseJson) return undefined as T;
   return response.json() as Promise<T>;
 }
 
-export function fetchBoard(userId: string): Promise<ApiBoard> {
-  return request<ApiBoard>(`/users/${userId}/board`);
+export type AuthUser = {
+  id: string;
+  username: string;
+};
+
+export function signUp(username: string, password: string): Promise<AuthUser> {
+  return request<AuthUser>("/auth/signup", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
 }
 
-export function saveBoard(userId: string, name: string, columns: Column[]): Promise<ApiBoard> {
-  return request<ApiBoard>(`/users/${userId}/board`, {
+export function signIn(username: string, password: string): Promise<AuthUser> {
+  return request<AuthUser>("/auth/login", {
+    method: "POST",
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function signOut(): Promise<void> {
+  return request<void>("/auth/logout", { method: "POST", parseJson: false });
+}
+
+export async function getCurrentUser(): Promise<AuthUser | null> {
+  const response = await fetch(`${API_BASE_URL}/auth/me`, { credentials: "include" });
+  if (response.status === 401) return null;
+  if (!response.ok) throw new Error(await parseErrorDetail(response));
+  return response.json() as Promise<AuthUser>;
+}
+
+export type ForgotPasswordResponse = {
+  message: string;
+  reset_token: string | null;
+};
+
+export function forgotPassword(username: string): Promise<ForgotPasswordResponse> {
+  return request<ForgotPasswordResponse>("/auth/forgot-password", {
+    method: "POST",
+    body: JSON.stringify({ username }),
+  });
+}
+
+export function resetPassword(token: string, newPassword: string): Promise<void> {
+  return request<void>("/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify({ token, new_password: newPassword }),
+    parseJson: false,
+  });
+}
+
+export function fetchBoard(): Promise<ApiBoard> {
+  return request<ApiBoard>("/board");
+}
+
+export function saveBoard(name: string, columns: Column[]): Promise<ApiBoard> {
+  return request<ApiBoard>("/board", {
     method: "PUT",
     body: JSON.stringify({
       name,
