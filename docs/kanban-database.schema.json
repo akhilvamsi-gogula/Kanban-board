@@ -39,15 +39,14 @@
     "user": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "username", "board_id"],
+      "required": ["id", "username"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
         "username": {
           "type": "string",
           "minLength": 1,
           "maxLength": 100
-        },
-        "board_id": { "$ref": "#/$defs/id" }
+        }
       }
     },
     "board": {
@@ -56,7 +55,10 @@
       "required": ["id", "owner_id", "name"],
       "properties": {
         "id": { "$ref": "#/$defs/id" },
-        "owner_id": { "$ref": "#/$defs/id" },
+        "owner_id": {
+          "$ref": "#/$defs/id",
+          "description": "References user.id. Not unique across boards - a user may own more than one board (Part 11: multi-board support)."
+        },
         "name": {
           "type": "string",
           "minLength": 1,

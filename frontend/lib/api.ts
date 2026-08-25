@@ -1,4 +1,4 @@
-import type { Card, Column } from "./types";
+import type { BoardSummary, Card, Column } from "./types";
 
 type ApiCard = Card & { position: number };
 type ApiColumn = Omit<Column, "cards"> & { position: number; cards: ApiCard[] };
@@ -81,12 +81,23 @@ export function resetPassword(token: string, newPassword: string): Promise<void>
   });
 }
 
-export function fetchBoard(): Promise<ApiBoard> {
-  return request<ApiBoard>("/board");
+export function listBoards(): Promise<BoardSummary[]> {
+  return request<BoardSummary[]>("/boards");
 }
 
-export function saveBoard(name: string, columns: Column[]): Promise<ApiBoard> {
-  return request<ApiBoard>("/board", {
+export function createBoard(name: string): Promise<ApiBoard> {
+  return request<ApiBoard>("/boards", {
+    method: "POST",
+    body: JSON.stringify({ name }),
+  });
+}
+
+export function fetchBoard(boardId: string): Promise<ApiBoard> {
+  return request<ApiBoard>(`/boards/${boardId}`);
+}
+
+export function saveBoard(boardId: string, name: string, columns: Column[]): Promise<ApiBoard> {
+  return request<ApiBoard>(`/boards/${boardId}`, {
     method: "PUT",
     body: JSON.stringify({
       name,
@@ -96,6 +107,17 @@ export function saveBoard(name: string, columns: Column[]): Promise<ApiBoard> {
         cards: column.cards.map((card, cardIndex) => ({ ...card, position: cardIndex })),
       })),
     }),
+  });
+}
+
+export function deleteBoard(boardId: string): Promise<void> {
+  return request<void>(`/boards/${boardId}`, { method: "DELETE", parseJson: false });
+}
+
+export function renameBoard(boardId: string, name: string): Promise<ApiBoard> {
+  return request<ApiBoard>(`/boards/${boardId}`, {
+    method: "PATCH",
+    body: JSON.stringify({ name }),
   });
 }
 

@@ -9,6 +9,7 @@ import { askBoardAssistant, type AiBoardUpdate, type AiMessage } from "../lib/ap
 import type { Card, Column } from "../lib/types";
 import { ColumnView } from "./column";
 import { CardFormDialog, DeleteCardDialog, RenameColumnDialog } from "./board-dialogs";
+import { BoardSwitcher, type BoardSwitcherProps } from "./board-switcher";
 
 export function reorderCards(cards: Card[], activeId: string, overId: string): Card[] {
   const oldIndex = cards.findIndex((card) => card.id === activeId);
@@ -21,14 +22,28 @@ const UNDO_REQUEST_PATTERN = /\bundo\b/i;
 type BoardProps = {
   columns?: Column[];
   boardName?: string;
+  boardId?: string;
+  ownerId?: string;
   username?: string;
   isVisible?: boolean;
   onLogout: () => void;
   onColumnsChange?: (columns: Column[], previousColumns: Column[]) => void;
   onBoardNameChange?: (nextBoardName: string) => void;
+  switcher?: BoardSwitcherProps;
 };
 
-export function Board({ columns: controlledColumns, boardName = "My board", username, isVisible = true, onLogout, onColumnsChange, onBoardNameChange }: BoardProps) {
+export function Board({
+  columns: controlledColumns,
+  boardName = "My board",
+  boardId = "demo-board",
+  ownerId = "demo-user",
+  username,
+  isVisible = true,
+  onLogout,
+  onColumnsChange,
+  onBoardNameChange,
+  switcher,
+}: BoardProps) {
   const [localColumns, setLocalColumns] = useState(initialColumns);
   const columns = controlledColumns ?? localColumns;
   const [activeCard, setActiveCard] = useState<Card | null>(null);
@@ -80,7 +95,7 @@ export function Board({ columns: controlledColumns, boardName = "My board", user
     setAssistantError(null);
 
     // The AI is never shown prior board states, only the current one plus text history, so it
-    // cannot reconstruct an earlier layout — "undo" is handled locally from a real snapshot instead.
+    // cannot reconstruct an earlier layout - "undo" is handled locally from a real snapshot instead.
     if (UNDO_REQUEST_PATTERN.test(trimmedPrompt)) {
       if (preAiUpdateState) {
         onBoardNameChange?.(preAiUpdateState.boardName);
@@ -97,8 +112,8 @@ export function Board({ columns: controlledColumns, boardName = "My board", user
 
     try {
       const response = await askBoardAssistant(trimmedPrompt, {
-        id: "demo-user-board",
-        owner_id: "demo-user",
+        id: boardId,
+        owner_id: ownerId,
         name: boardName,
         columns: columns.map((column, columnIndex) => ({
           ...column,
@@ -176,7 +191,7 @@ export function Board({ columns: controlledColumns, boardName = "My board", user
   }
 
   return <main className="app-shell" hidden={!isVisible} aria-hidden={!isVisible}>
-    <header className="topbar"><div className="brand-mark">Kanban board</div><div className="topbar-actions"><div className="topbar-meta"><span className="live-dot" /> {username ? `Signed in as ${username}` : "Signed in"}</div><button type="button" className="button button-quiet button-small" onClick={onLogout}>Log out</button></div></header>
+    <header className="topbar"><div className="topbar-brand"><div className="brand-mark">Kanban board</div>{switcher && <BoardSwitcher {...switcher} />}</div><div className="topbar-actions"><div className="topbar-meta"><span className="live-dot" /> {username ? `Signed in as ${username}` : "Signed in"}</div><button type="button" className="button button-quiet button-small" onClick={onLogout}>Log out</button></div></header>
     <section className="board-toolbar"><div><span className="section-label">Board</span><h1>{boardName}</h1></div><div className="toolbar-actions"><span className="card-total">{columns.reduce((total, column) => total + column.cards.length, 0)} cards</span><button type="button" className="button button-primary toolbar-add" onClick={() => setCardDialog({ columnId: columns[0].id })}><Plus size={17} /> Add card</button><button type="button" className="ai-launcher" onClick={() => setIsAssistantOpen(true)} aria-label="AI assistant" aria-expanded={isAssistantOpen}><span className="ai-launcher-icon"><Sparkles size={18} /></span><span><strong>AI co-pilot</strong><small>Ask or change your board</small></span><ArrowUpRight size={17} /></button></div></section>
     <DndContext sensors={sensors} collisionDetection={closestCorners} onDragStart={handleDragStart} onDragCancel={handleDragCancel} onDragEnd={handleDragEnd}><div className="board-grid">{columns.map((column) => <ColumnView key={column.id} column={column} onAdd={(columnId) => setCardDialog({ columnId })} onRename={setRenameColumn} onEdit={(card) => { const location = findCard(card.id); if (location) setCardDialog({ columnId: location.columnId, card }); }} onDelete={setDeleteCard} />)}</div><DragOverlay>{activeCard ? <div className="task-card task-card-overlay"><ArrowUpRight size={16} /><h3>{activeCard.title}</h3></div> : null}</DragOverlay></DndContext>
     {isAssistantOpen && <>

@@ -9,7 +9,7 @@ import httpx
 from dotenv import load_dotenv
 from fastapi import Cookie, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 import json
 from pydantic import ValidationError
 
@@ -19,7 +19,9 @@ from .models import (
     AiChatRequest,
     AiChatResponse,
     BoardResponse,
+    BoardSummary,
     BoardUpdate,
+    CreateBoardRequest,
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     LoginRequest,
@@ -27,7 +29,14 @@ from .models import (
     SignupRequest,
     UserResponse,
 )
-from .repository import DEFAULT_DATA_PATH, DataStoreError, KanbanRepository, UsernameTakenError
+from .repository import (
+    DEFAULT_DATA_PATH,
+    BoardNotFoundError,
+    CannotDeleteLastBoardError,
+    DataStoreError,
+    KanbanRepository,
+    UsernameTakenError,
+)
 
 app = FastAPI(title="Kanban Backend", version="0.1.0")
 repository = KanbanRepository(Path(os.environ["KANBAN_DATA_PATH"]) if "KANBAN_DATA_PATH" in os.environ else DEFAULT_DATA_PATH)
@@ -36,9 +45,24 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Content-Type"],
 )
+
+REPOSITORY_ERROR_STATUS: dict[type[Exception], int] = {
+    BoardNotFoundError: 404,
+    CannotDeleteLastBoardError: 409,
+    DataStoreError: 500,
+}
+
+
+def _repository_error_response(request: Request, error: Exception) -> JSONResponse:
+    return JSONResponse(status_code=REPOSITORY_ERROR_STATUS[type(error)], content={"detail": str(error)})
+
+
+for _error_type in REPOSITORY_ERROR_STATUS:
+    app.add_exception_handler(_error_type, _repository_error_response)
+
 
 SESSION_COOKIE_NAME = "kanban_session"
 SESSION_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
@@ -222,9 +246,10 @@ async def ai_chat(payload: AiChatRequest) -> AiChatResponse:
         "Only make safe edits to the existing board: rename columns, add/rename/remove cards, and reorder cards within or across columns. "
         "There are always exactly 5 columns; never invent, remove, or rename a column's id, only its name. "
         "When adding a new card, invent a short new id for it: lowercase letters, digits, and hyphens only, starting with a letter, not already used by any existing card or column. "
+        "Every card object has exactly the fields id, title, and details (details may be an empty string) - never use 'name' for a card's title. "
         "Preserve the id of every existing card and column you are not removing. "
         "If no board change is needed, omit board_update. "
-        "If assistant_message describes a change you made, board_update must be included and reflect that exact change — never claim a change without including it."
+        "If assistant_message describes a change you made, board_update must be included and reflect that exact change - never claim a change without including it."
     )
 
     messages = [{"role": "system", "content": system_prompt}]
@@ -294,6 +319,19 @@ async def ai_chat(payload: AiChatRequest) -> AiChatResponse:
                         name = column.get("name")
                         if name is not None and (not isinstance(name, str) or not name.strip()):
                             raise ValueError("column names must be non-empty strings")
+                        cards = column.get("cards")
+                        if cards is not None:
+                            if not isinstance(cards, list):
+                                raise ValueError("column cards must be an array")
+                            for card in cards:
+                                if not isinstance(card, dict):
+                                    raise ValueError("card updates must be objects")
+                                card_id = card.get("id")
+                                if not isinstance(card_id, str) or not card_id.strip():
+                                    raise ValueError("card updates require a non-empty id")
+                                card_title = card.get("title")
+                                if not isinstance(card_title, str) or not card_title.strip():
+                                    raise ValueError("card updates require a non-empty title")
             return AiChatResponse(assistant_message=assistant_message, board_update=board_update)
         except (KeyError, TypeError, ValueError, ValidationError):
             if is_last_attempt:
@@ -309,8 +347,6 @@ def signup(payload: SignupRequest, response: Response) -> UserResponse:
         user = repository.create_user(payload.username, payload.password)
     except UsernameTakenError as error:
         raise HTTPException(status_code=409, detail="Username is already taken") from error
-    except DataStoreError as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
     token = repository.create_session(user.id)
     _set_session_cookie(response, token)
     return user
@@ -353,17 +389,32 @@ def reset_password(payload: ResetPasswordRequest) -> dict[str, bool]:
     return {"ok": True}
 
 
-@app.get("/api/board", response_model=BoardResponse)
-def get_board(user: UserResponse = Depends(get_current_user)) -> BoardResponse:
-    try:
-        return repository.get_board(user.id)
-    except DataStoreError as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+@app.get("/api/boards", response_model=list[BoardSummary])
+def list_boards(user: UserResponse = Depends(get_current_user)) -> list[BoardSummary]:
+    return repository.list_boards(user.id)
 
 
-@app.put("/api/board", response_model=BoardResponse)
-def update_board(board: BoardUpdate, user: UserResponse = Depends(get_current_user)) -> BoardResponse:
-    try:
-        return repository.save_board(user.id, board)
-    except DataStoreError as error:
-        raise HTTPException(status_code=500, detail=str(error)) from error
+@app.post("/api/boards", response_model=BoardResponse, status_code=201)
+def create_board(payload: CreateBoardRequest, user: UserResponse = Depends(get_current_user)) -> BoardResponse:
+    return repository.create_board(user.id, payload.name)
+
+
+@app.get("/api/boards/{board_id}", response_model=BoardResponse)
+def get_board(board_id: str, user: UserResponse = Depends(get_current_user)) -> BoardResponse:
+    return repository.get_board(user.id, board_id)
+
+
+@app.put("/api/boards/{board_id}", response_model=BoardResponse)
+def update_board(board_id: str, board: BoardUpdate, user: UserResponse = Depends(get_current_user)) -> BoardResponse:
+    return repository.save_board(user.id, board_id, board)
+
+
+@app.patch("/api/boards/{board_id}", response_model=BoardResponse)
+def rename_board(board_id: str, payload: CreateBoardRequest, user: UserResponse = Depends(get_current_user)) -> BoardResponse:
+    return repository.rename_board(user.id, board_id, payload.name)
+
+
+@app.delete("/api/boards/{board_id}", status_code=204)
+def delete_board(board_id: str, user: UserResponse = Depends(get_current_user)) -> Response:
+    repository.delete_board(user.id, board_id)
+    return Response(status_code=204)

@@ -53,9 +53,60 @@ test("supports the core board workflow", async ({ page }) => {
   await expect(page.getByText("Browser workflow card")).not.toBeVisible();
 
   // Real sessions persist across reload (unlike the old demo-only auth), so no
-  // re-sign-in is needed here — reload just confirms the rename survived a fresh fetch.
+  // re-sign-in is needed here - reload just confirms the rename survived a fresh fetch.
   await page.reload();
   await expect(page.getByRole("heading", { name: "Ideas" })).toBeVisible({ timeout: 15000 });
+});
+
+test("supports creating, switching between, and isolating multiple boards", async ({ page }) => {
+  const username = uniqueUsername("multiboard");
+  const password = "password123";
+  await page.goto("/");
+  await signUp(page, username, password);
+  await expect(page.getByRole("heading", { name: "My board" })).toBeVisible();
+
+  await page.locator(".toolbar-add").click();
+  await page.getByLabel("Title").fill("Only on the first board");
+  await page.locator(".dialog-form .button-primary").click();
+  await expect(page.getByText("Only on the first board")).toBeVisible();
+
+  await page.getByRole("button", { name: /My board/ }).click();
+  await page.getByRole("button", { name: "New board" }).click();
+  await page.getByLabel("Board name").fill("Second board");
+  await page.getByRole("button", { name: "Create board" }).click();
+  await expect(page.getByRole("heading", { name: "Second board" })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("Only on the first board")).not.toBeVisible();
+
+  await page.getByRole("button", { name: /Second board/ }).click();
+  await page.getByRole("button", { name: "My board", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "My board" })).toBeVisible();
+  await expect(page.getByText("Only on the first board")).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "My board" })).toBeVisible({ timeout: 15000 });
+});
+
+test("supports renaming a board and re-selecting the active board without getting stuck loading", async ({ page }) => {
+  const username = uniqueUsername("renameboard");
+  const password = "password123";
+  await page.goto("/");
+  await signUp(page, username, password);
+  await expect(page.getByRole("heading", { name: "My board" })).toBeVisible();
+
+  await page.getByRole("button", { name: /My board/ }).click();
+  await page.getByRole("button", { name: "Rename My board" }).click();
+  await page.getByLabel("Board name").fill("Renamed board");
+  await page.getByRole("button", { name: "Rename board" }).click();
+  await expect(page.getByRole("heading", { name: "Renamed board" })).toBeVisible({ timeout: 15000 });
+
+  // Re-selecting the already-active board from the switcher must not get stuck loading.
+  await page.getByRole("button", { name: /Renamed board/ }).click();
+  await page.locator(".board-switcher-panel").getByRole("button", { name: "Renamed board", exact: true }).click();
+  await expect(page.getByText("Loading your board...")).not.toBeVisible();
+  await expect(page.getByRole("heading", { name: "Renamed board" })).toBeVisible();
+
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Renamed board" })).toBeVisible({ timeout: 15000 });
 });
 
 test("keeps the board usable on a narrow viewport", async ({ page }) => {

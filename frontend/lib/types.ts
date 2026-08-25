@@ -10,3 +10,8 @@ export type Column = {
   accent: string;
   cards: Card[];
 };
+
+export type BoardSummary = {
+  id: string;
+  name: string;
+};

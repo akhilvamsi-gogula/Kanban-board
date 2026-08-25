@@ -64,6 +64,24 @@ class BoardResponse(BoardUpdate):
     owner_id: str
 
 
+class BoardSummary(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str
+    name: str
+
+
+class CreateBoardRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=120)
+
+    @field_validator("name")
+    @classmethod
+    def trim_board_name(cls, value: str) -> str:
+        return value.strip()
+
+
 class SignupRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 

@@ -4,10 +4,12 @@
 
 Approved for Part 5 and implemented in Parts 6 and 7. Future schema changes still require review and a versioned migration decision.
 
+**Storage engine note:** this document describes the original JSON-file design approved for Part 5. The store was later migrated to SQLite (`backend/data/kanban.db`, WAL mode) - see `backend/app/repository.py` and `CLAUDE.md` for the authoritative current schema and write strategy. The relational shape below (users/boards/columns/cards linked by id) still matches; the "File and Write Strategy" section does not - SQLite replaces the JSON-file-plus-atomic-rename approach entirely. Part 11 (multi-board support, see `docs/PLAN.md`) additionally relaxed the "one board per user" rule described below to "one or more boards per user."
+
 ## Goals
 
 - Keep the local database human-readable and easy to inspect.
-- Support multiple users while preserving one board per user for this project.
+- Support multiple users, each able to own one or more boards (see the Part 11 update in `docs/PLAN.md`).
 - Preserve the MVP's five fixed columns and card-only content model.
 - Make card movement and reordering explicit and deterministic.
 - Avoid storing passwords; Part 4 credentials remain a client-only demo until a real authentication decision is made.
@@ -26,8 +28,7 @@ The database is one JSON object with five top-level collections:
 
 Relationships are represented by IDs:
 
-- `users.board_id` references `boards.id`.
-- `boards.owner_id` references `users.id`.
+- `boards.owner_id` references `users.id` (not unique - a user may own several boards).
 - `columns.board_id` references `boards.id`.
 - `cards.board_id` references `boards.id`.
 - `cards.column_id` references `columns.id`.
@@ -86,7 +87,7 @@ The complete seeded example is in the JSON example file.
 - Database `schema_version` must equal the supported version.
 - All referenced IDs must exist and have the correct relationship.
 - User, board, column, card, and position records must not be duplicated.
-- A user owns exactly one board in this project.
+- A user owns one or more boards; deleting a user's only remaining board is rejected.
 - A board must have exactly five columns with unique positions `0` through `4`.
 - Column names are trimmed and 1 to 80 characters.
 - Card titles are trimmed and 1 to 200 characters.
@@ -99,7 +100,7 @@ The complete seeded example is in the JSON example file.
 
 If the database file does not exist, the backend creates its parent directory and writes the seeded instance from `kanban-database.example.json` atomically. A valid user or board with no cards remains an empty board with five columns; it is not reseeded.
 
-The initial demo user is `demo-user` with username `user`. This is data identity only, not a password or authentication mechanism.
+Superseded: this originally described a fixed demo user (`demo-user` / username `user`) with no password mechanism, from before real accounts existed. Every signup now creates its own user row (bcrypt password hash) and seeds exactly one board for that user; additional boards are created on request (Part 11).
 
 ## File and Write Strategy
 
@@ -131,8 +132,8 @@ A future recovery command may copy the invalid file to a timestamped `.corrupt` 
 These decisions were approved before Part 6:
 
 1. Normalized top-level collections versus nested boards and cards.
-2. One board per user with exactly five columns.
-3. `backend/data/kanban.json` as the local path.
-4. Atomic writes with single-process locking.
+2. One or more boards per user, each with exactly five columns (relaxed from "exactly one board per user" in Part 11 - see `docs/PLAN.md`).
+3. `backend/data/kanban.json` as the local path (superseded by `backend/data/kanban.db`, SQLite - see the storage engine note above).
+4. Atomic writes with single-process locking (implemented via SQLite WAL mode plus an in-process lock, not a JSON temp-file rename - see `backend/app/repository.py`).
 5. Fail-closed corruption handling instead of automatic reseeding.
-6. No password field in this JSON store.
+6. No password field in this JSON store (superseded - the SQLite `users` table stores a bcrypt password hash once real authentication was added).
