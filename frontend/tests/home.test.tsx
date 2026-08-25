@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import Home from "../app/page";
@@ -21,11 +21,11 @@ function stubFetch(handlers: Record<string, Handler>) {
   }));
 }
 
-function makeApiBoard() {
+function makeApiBoard(id = "q3-product-launch", name = "Q3 product launch") {
   return {
-    id: "q3-product-launch",
+    id,
     owner_id: "demo-user",
-    name: "Q3 product launch",
+    name,
     columns: initialColumns.map((column, columnIndex) => ({
       ...column,
       position: columnIndex,
@@ -53,8 +53,9 @@ describe("Home session lifecycle", () => {
       "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
       "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
       "POST /backend-api/auth/logout": () => ({ status: 200, body: {} }),
-      "GET /backend-api/board": () => ({ status: 200, body: storedBoard }),
-      "PUT /backend-api/board": (options) => {
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: storedBoard.id, name: storedBoard.name }] }),
+      "GET /backend-api/boards/q3-product-launch": () => ({ status: 200, body: storedBoard }),
+      "PUT /backend-api/boards/q3-product-launch": (options) => {
         storedBoard = { ...storedBoard, ...JSON.parse(String(options?.body)) };
         return { status: 200, body: storedBoard };
       },
@@ -78,7 +79,7 @@ describe("Home session lifecycle", () => {
     stubFetch({
       "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
       "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
-      "GET /backend-api/board": () => {
+      "GET /backend-api/boards": () => {
         throw new Error("Backend unavailable");
       },
     });
@@ -96,8 +97,9 @@ describe("Home session lifecycle", () => {
     stubFetch({
       "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
       "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
-      "GET /backend-api/board": () => ({ status: 200, body: makeApiBoard() }),
-      "PUT /backend-api/board": () => ({ status: 200, body: {} }),
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: "q3-product-launch", name: "Q3 product launch" }] }),
+      "GET /backend-api/boards/q3-product-launch": () => ({ status: 200, body: makeApiBoard() }),
+      "PUT /backend-api/boards/q3-product-launch": () => ({ status: 200, body: {} }),
       "POST /backend-api/ai/chat": (options) => {
         chatRequest = JSON.parse(String(options?.body));
         return { status: 200, body: { assistant_message: "There are 8 cards on this board." } };
@@ -127,8 +129,9 @@ describe("Home session lifecycle", () => {
     stubFetch({
       "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
       "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
-      "GET /backend-api/board": () => ({ status: 200, body: apiBoard }),
-      "PUT /backend-api/board": () => {
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: apiBoard.id, name: apiBoard.name }] }),
+      "GET /backend-api/boards/q3-product-launch": () => ({ status: 200, body: apiBoard }),
+      "PUT /backend-api/boards/q3-product-launch": () => {
         if (putAttempts++ === 0) throw new Error("Save failed");
         return { status: 200, body: apiBoard };
       },
@@ -151,7 +154,8 @@ describe("Home session lifecycle", () => {
     stubFetch({
       "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
       "POST /backend-api/auth/signup": () => ({ status: 201, body: { id: "9", username: "newuser" } }),
-      "GET /backend-api/board": () => ({ status: 200, body: makeApiBoard() }),
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: "q3-product-launch", name: "Q3 product launch" }] }),
+      "GET /backend-api/boards/q3-product-launch": () => ({ status: 200, body: makeApiBoard() }),
     });
     render(<Home />);
 
@@ -178,5 +182,135 @@ describe("Home session lifecycle", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("Invalid username or password.");
     expect(screen.queryByRole("heading", { name: "Q3 product launch" })).not.toBeInTheDocument();
+  });
+
+  it("creates a second board and switches to it", async () => {
+    const user = userEvent.setup();
+    const firstBoard = makeApiBoard("board-one", "First board");
+    const secondBoard = makeApiBoard("board-two", "Second board");
+    secondBoard.columns = secondBoard.columns.map((column) => ({ ...column, cards: [] }));
+    let boards = [{ id: firstBoard.id, name: firstBoard.name }];
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
+      "GET /backend-api/boards": () => ({ status: 200, body: boards }),
+      "GET /backend-api/boards/board-one": () => ({ status: 200, body: firstBoard }),
+      "GET /backend-api/boards/board-two": () => ({ status: 200, body: secondBoard }),
+      "POST /backend-api/boards": () => {
+        boards = [...boards, { id: secondBoard.id, name: secondBoard.name }];
+        return { status: 201, body: secondBoard };
+      },
+    });
+    render(<Home />);
+
+    await signIn(user);
+    expect(await screen.findByRole("heading", { name: "First board" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /First board/ }));
+    await user.click(screen.getByRole("button", { name: "New board" }));
+    await user.type(screen.getByLabelText("Board name"), "Second board");
+    await user.click(screen.getByRole("button", { name: "Create board" }));
+
+    expect(await screen.findByRole("heading", { name: "Second board" })).toBeInTheDocument();
+  });
+
+  it("does not get stuck loading when clicking the already-active board in the switcher", async () => {
+    const user = userEvent.setup();
+    const board = makeApiBoard("board-one", "First board");
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: board.id, name: board.name }] }),
+      "GET /backend-api/boards/board-one": () => ({ status: 200, body: board }),
+    });
+    render(<Home />);
+
+    await signIn(user);
+    expect(await screen.findByRole("heading", { name: "First board" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /First board/ }));
+    const panel = screen.getByRole("button", { name: "New board" }).closest(".board-switcher-panel") as HTMLElement;
+    await user.click(within(panel).getByRole("button", { name: "First board" }));
+
+    expect(screen.queryByText("Loading your board...")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "First board" })).toBeInTheDocument();
+  });
+
+  it("renames a board via the switcher", async () => {
+    const user = userEvent.setup();
+    let board = makeApiBoard("board-one", "First board");
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: board.id, name: board.name }] }),
+      "GET /backend-api/boards/board-one": () => ({ status: 200, body: board }),
+      "PATCH /backend-api/boards/board-one": (options) => {
+        board = { ...board, ...JSON.parse(String(options?.body)) };
+        return { status: 200, body: board };
+      },
+    });
+    render(<Home />);
+
+    await signIn(user);
+    expect(await screen.findByRole("heading", { name: "First board" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /First board/ }));
+    await user.click(screen.getByRole("button", { name: "Rename First board" }));
+    await user.clear(screen.getByLabelText("Board name"));
+    await user.type(screen.getByLabelText("Board name"), "Renamed board");
+    await user.click(screen.getByRole("button", { name: "Rename board" }));
+
+    expect(await screen.findByRole("heading", { name: "Renamed board" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Renamed board/ })).toBeInTheDocument();
+  });
+
+  it("does not let a stale save from a previous board overwrite the newly active board", async () => {
+    const user = userEvent.setup();
+    const firstBoard = makeApiBoard("board-one", "First board");
+    const secondBoard = makeApiBoard("board-two", "Second board");
+    const boards = [
+      { id: firstBoard.id, name: firstBoard.name },
+      { id: secondBoard.id, name: secondBoard.name },
+    ];
+    const putGateControls: { resolve?: () => void } = {};
+    const putGate = new Promise<void>((resolve) => {
+      putGateControls.resolve = () => resolve();
+    });
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
+      "GET /backend-api/boards": () => ({ status: 200, body: boards }),
+      "GET /backend-api/boards/board-one": () => ({ status: 200, body: firstBoard }),
+      "GET /backend-api/boards/board-two": () => ({ status: 200, body: secondBoard }),
+    });
+    render(<Home />);
+    await signIn(user);
+    expect(await screen.findByRole("heading", { name: "First board" })).toBeInTheDocument();
+
+    // Replace the PUT handler with one that hangs until manually resolved, simulating a
+    // save still in flight when the user switches to a different board.
+    const originalFetch = global.fetch;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const key = `${options?.method ?? "GET"} ${pathOf(input)}`;
+      if (key === "PUT /backend-api/boards/board-one") {
+        await putGate;
+        return { ok: true, status: 200, json: async () => firstBoard };
+      }
+      return originalFetch(input, options);
+    }));
+
+    await user.click(await screen.findByRole("button", { name: "Rename Backlog" }));
+    await user.clear(screen.getByLabelText("Column name"));
+    await user.type(screen.getByLabelText("Column name"), "Renamed while saving");
+    await user.click(screen.getByRole("button", { name: "Rename column" }));
+
+    await user.click(screen.getByRole("button", { name: /First board/ }));
+    await user.click(screen.getByRole("button", { name: "Second board" }));
+    expect(await screen.findByRole("heading", { name: "Second board" })).toBeInTheDocument();
+
+    // Now let the stale save for board-one resolve; it must not clobber the now-active board.
+    putGateControls.resolve?.();
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Second board" })).toBeInTheDocument());
+    expect(screen.queryByRole("heading", { name: "Renamed while saving" })).not.toBeInTheDocument();
   });
 });

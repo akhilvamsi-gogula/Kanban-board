@@ -2,7 +2,7 @@
 
 import { FormEvent, useState } from "react";
 import { X } from "lucide-react";
-import type { Card, Column } from "../lib/types";
+import type { BoardSummary, Card, Column } from "../lib/types";
 
 type DialogFrameProps = {
   title: string;
@@ -63,4 +63,20 @@ type DeleteDialogProps = { card: Card; onClose: () => void; onConfirm: () => voi
 
 export function DeleteCardDialog({ card, onClose, onConfirm }: DeleteDialogProps) {
   return <DialogFrame eyebrow="This cannot be undone" title="Delete this card?" onClose={onClose}><div className="delete-copy"><p><strong>{card.title}</strong> will be removed from the board.</p></div><div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Keep card</button><button type="button" className="button button-danger" onClick={onConfirm}>Delete card</button></div></DialogFrame>;
+}
+
+type BoardNameDialogProps = { title: string; submitLabel: string; initialName?: string; placeholder?: string; onClose: () => void; onSubmit: (name: string) => void };
+
+export function BoardNameDialog({ title, submitLabel, initialName = "", placeholder, onClose, onSubmit }: BoardNameDialogProps) {
+  const [name, setName] = useState(initialName);
+  function handleSubmit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (name.trim()) onSubmit(name.trim()); }
+  return <DialogFrame eyebrow="Board structure" title={title} onClose={onClose}>
+    <form className="dialog-form" onSubmit={handleSubmit}><label>Board name<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={placeholder} /></label><div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary">{submitLabel}</button></div></form>
+  </DialogFrame>;
+}
+
+type DeleteBoardDialogProps = { board: BoardSummary; onClose: () => void; onConfirm: () => void };
+
+export function DeleteBoardDialog({ board, onClose, onConfirm }: DeleteBoardDialogProps) {
+  return <DialogFrame eyebrow="This cannot be undone" title="Delete this board?" onClose={onClose}><div className="delete-copy"><p><strong>{board.name}</strong> and all of its cards will be removed.</p></div><div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Keep board</button><button type="button" className="button button-danger" onClick={onConfirm}>Delete board</button></div></DialogFrame>;
 }

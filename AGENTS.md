@@ -3,8 +3,8 @@
 ## Business Requirements
 
 - An MVP of a Kanban style Project Management application as a web app
-- The web app should only have 1 board
-- The board has fixed 5 columns that can be renamed
+- Each account can create and switch between multiple boards; every account always keeps at least one board
+- Each board has fixed 5 columns that can be renamed
 - Each card has a title and details only
 - Drag and drop interface to move cards between columns and reorder cards within a column
 - Add, edit, and delete cards; deletion requires confirmation
@@ -17,16 +17,16 @@
 
 - Implemented as a modern Next.js App Router app with TypeScript
 - The NextJS app should be created in a subdirectory `frontend`
-- The interactive board is client-only; board reads and writes use the FastAPI service after demo sign-in
-- Refresh resets the demo sign-in state, while the backend JSON store retains board changes
-- Demo sign-in uses `user` / `password`; it is not production authentication
+- The interactive board is client-only; board reads and writes use the FastAPI service after sign-in
+- Accounts are real: bcrypt-hashed passwords and server-side sessions (httpOnly cookie) persisted in SQLite, not client-only demo state; sessions survive a refresh
+- Password reset has no email provider wired up; the reset token is returned directly in the API response and shown on-screen instead
 - The optional AI co-pilot sends board context to Groq only through the backend
 - Asking the AI co-pilot to "undo" reverts its last board change locally from a saved snapshot, without another Groq request
 - Uses dnd-kit for pointer and keyboard drag-and-drop
 - Uses lucide-react for interface icons
 - Uses Vitest and Testing Library for unit/component tests
 - Uses Playwright for browser workflow and responsive tests
-- Uses Groq (api.groq.com, OpenAI-compatible) through a backend-only integration with `openai/gpt-oss-20b` by default — free tier, no billing required
+- Uses Groq (api.groq.com, OpenAI-compatible) through a backend-only integration with `openai/gpt-oss-20b` by default - free tier, no billing required
 - Backend dependencies are managed with uv (`pyproject.toml` / `uv.lock`), not pip/requirements.txt
 - As simple as possible but with an elegant UI
 

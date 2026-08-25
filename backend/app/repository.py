@@ -9,7 +9,7 @@ from typing import Iterator
 
 import bcrypt
 
-from .models import BoardResponse, BoardUpdate, CardModel, ColumnModel, UserResponse
+from .models import BoardResponse, BoardSummary, BoardUpdate, CardModel, ColumnModel, UserResponse
 
 DEFAULT_DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "kanban.db"
 
@@ -30,14 +30,14 @@ CREATE TABLE IF NOT EXISTS users (
   id TEXT PRIMARY KEY,
   username TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
-  board_id TEXT NOT NULL,
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS boards (
   id TEXT PRIMARY KEY,
-  owner_id TEXT NOT NULL UNIQUE,
+  owner_id TEXT NOT NULL,
   name TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_boards_owner_id ON boards (owner_id);
 CREATE TABLE IF NOT EXISTS columns (
   row_id INTEGER PRIMARY KEY AUTOINCREMENT,
   id TEXT NOT NULL,
@@ -81,6 +81,14 @@ class UsernameTakenError(Exception):
     pass
 
 
+class BoardNotFoundError(Exception):
+    pass
+
+
+class CannotDeleteLastBoardError(Exception):
+    pass
+
+
 def _now() -> datetime:
     return datetime.now(timezone.utc)
 
@@ -110,6 +118,34 @@ def _verify_password(password: str, password_hash: str) -> bool:
         return False
 
 
+@contextmanager
+def _write(conn: sqlite3.Connection) -> Iterator[None]:
+    try:
+        yield
+        conn.commit()
+    except sqlite3.Error as error:
+        conn.rollback()
+        raise DataStoreError("Kanban database is not writable") from error
+
+
+def _insert_board(conn: sqlite3.Connection, board_id: str, owner_id: str, name: str) -> None:
+    conn.execute("INSERT INTO boards (id, owner_id, name) VALUES (?, ?, ?)", (board_id, owner_id, name))
+    for position, column in enumerate(DEFAULT_COLUMNS):
+        conn.execute(
+            "INSERT INTO columns (id, board_id, name, accent, position) VALUES (?, ?, ?, ?, ?)",
+            (column["id"], board_id, column["name"], column["accent"], position),
+        )
+
+
+def _require_board(conn: sqlite3.Connection, user_id: str, board_id: str) -> sqlite3.Row:
+    board = conn.execute(
+        "SELECT id, owner_id, name FROM boards WHERE id = ? AND owner_id = ?", (board_id, user_id)
+    ).fetchone()
+    if board is None:
+        raise BoardNotFoundError("Board not found")
+    return board
+
+
 class KanbanRepository:
     def __init__(self, path: Path = DEFAULT_DATA_PATH) -> None:
         self.path = path
@@ -117,7 +153,41 @@ class KanbanRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
             conn.executescript(SCHEMA)
+            self._migrate_relax_board_ownership(conn)
             conn.commit()
+
+    def _migrate_relax_board_ownership(self, conn: sqlite3.Connection) -> None:
+        # Older databases pinned each user to exactly one board, via a users.board_id
+        # column plus a UNIQUE constraint on boards.owner_id (both written by the same
+        # schema, so either one identifies the legacy shape). Neither can be dropped in
+        # place, so rebuild both tables. Non-destructive: every legacy row is already
+        # exactly one board per user, so relaxing the constraint loses no data.
+        if not any(row["name"] == "board_id" for row in conn.execute("PRAGMA table_info(users)")):
+            return
+        conn.executescript(
+            """
+            CREATE TABLE boards_migrated (
+              id TEXT PRIMARY KEY,
+              owner_id TEXT NOT NULL,
+              name TEXT NOT NULL
+            );
+            INSERT INTO boards_migrated (id, owner_id, name) SELECT id, owner_id, name FROM boards;
+            DROP TABLE boards;
+            ALTER TABLE boards_migrated RENAME TO boards;
+            CREATE INDEX IF NOT EXISTS idx_boards_owner_id ON boards (owner_id);
+
+            CREATE TABLE users_migrated (
+              id TEXT PRIMARY KEY,
+              username TEXT NOT NULL UNIQUE,
+              password_hash TEXT NOT NULL,
+              created_at TEXT NOT NULL
+            );
+            INSERT INTO users_migrated (id, username, password_hash, created_at)
+              SELECT id, username, password_hash, created_at FROM users;
+            DROP TABLE users;
+            ALTER TABLE users_migrated RENAME TO users;
+            """
+        )
 
     @contextmanager
     def _conn(self) -> Iterator[sqlite3.Connection]:
@@ -145,18 +215,10 @@ class KanbanRepository:
         with self._conn() as conn:
             try:
                 conn.execute(
-                    "INSERT INTO users (id, username, password_hash, board_id, created_at) VALUES (?, ?, ?, ?, ?)",
-                    (user_id, username, password_hash, board_id, _isoformat(_now())),
+                    "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                    (user_id, username, password_hash, _isoformat(_now())),
                 )
-                conn.execute(
-                    "INSERT INTO boards (id, owner_id, name) VALUES (?, ?, ?)",
-                    (board_id, user_id, DEFAULT_BOARD_NAME),
-                )
-                for position, column in enumerate(DEFAULT_COLUMNS):
-                    conn.execute(
-                        "INSERT INTO columns (id, board_id, name, accent, position) VALUES (?, ?, ?, ?, ?)",
-                        (column["id"], board_id, column["name"], column["accent"], position),
-                    )
+                _insert_board(conn, board_id, user_id, DEFAULT_BOARD_NAME)
                 conn.commit()
             except sqlite3.IntegrityError as error:
                 conn.rollback()
@@ -251,19 +313,37 @@ class KanbanRepository:
             conn.commit()
         return True
 
-    # -- board ----------------------------------------------------------------
+    # -- boards ----------------------------------------------------------------
 
-    def get_board(self, user_id: str) -> BoardResponse:
+    def list_boards(self, user_id: str) -> list[BoardSummary]:
         with self._conn() as conn:
-            board = conn.execute("SELECT id, owner_id, name FROM boards WHERE owner_id = ?", (user_id,)).fetchone()
-            if board is None:
-                raise DataStoreError("User board relationship is invalid")
+            rows = conn.execute(
+                "SELECT id, name FROM boards WHERE owner_id = ? ORDER BY rowid", (user_id,)
+            ).fetchall()
+        return [BoardSummary(id=row["id"], name=row["name"]) for row in rows]
+
+    def create_board(self, user_id: str, name: str) -> BoardResponse:
+        board_id = secrets.token_hex(16)
+        with self._conn() as conn, _write(conn):
+            _insert_board(conn, board_id, user_id, name)
+        return self.get_board(user_id, board_id)
+
+    def rename_board(self, user_id: str, board_id: str, name: str) -> BoardResponse:
+        with self._conn() as conn:
+            _require_board(conn, user_id, board_id)
+            with _write(conn):
+                conn.execute("UPDATE boards SET name = ? WHERE id = ?", (name, board_id))
+        return self.get_board(user_id, board_id)
+
+    def get_board(self, user_id: str, board_id: str) -> BoardResponse:
+        with self._conn() as conn:
+            board = _require_board(conn, user_id, board_id)
             column_rows = conn.execute(
-                "SELECT id, name, accent, position FROM columns WHERE board_id = ? ORDER BY position", (board["id"],)
+                "SELECT id, name, accent, position FROM columns WHERE board_id = ? ORDER BY position", (board_id,)
             ).fetchall()
             card_rows = conn.execute(
                 "SELECT id, column_id, title, details, position FROM cards WHERE board_id = ? ORDER BY position",
-                (board["id"],),
+                (board_id,),
             ).fetchall()
         try:
             columns = [
@@ -285,13 +365,10 @@ class KanbanRepository:
             raise DataStoreError("Kanban database structure is invalid") from error
         return BoardResponse(id=board["id"], owner_id=board["owner_id"], name=board_update.name, columns=board_update.columns)
 
-    def save_board(self, user_id: str, board: BoardUpdate) -> BoardResponse:
+    def save_board(self, user_id: str, board_id: str, board: BoardUpdate) -> BoardResponse:
         with self._conn() as conn:
-            board_row = conn.execute("SELECT id FROM boards WHERE owner_id = ?", (user_id,)).fetchone()
-            if board_row is None:
-                raise DataStoreError("User board relationship is invalid")
-            board_id = board_row["id"]
-            try:
+            _require_board(conn, user_id, board_id)
+            with _write(conn):
                 conn.execute("UPDATE boards SET name = ? WHERE id = ?", (board.name, board_id))
                 conn.execute("DELETE FROM columns WHERE board_id = ?", (board_id,))
                 conn.execute("DELETE FROM cards WHERE board_id = ?", (board_id,))
@@ -305,8 +382,15 @@ class KanbanRepository:
                             "INSERT INTO cards (id, board_id, column_id, title, details, position) VALUES (?, ?, ?, ?, ?, ?)",
                             (card.id, board_id, column.id, card.title, card.details, card.position),
                         )
-                conn.commit()
-            except sqlite3.Error as error:
-                conn.rollback()
-                raise DataStoreError("Kanban database is not writable") from error
-        return self.get_board(user_id)
+        return self.get_board(user_id, board_id)
+
+    def delete_board(self, user_id: str, board_id: str) -> None:
+        with self._conn() as conn:
+            _require_board(conn, user_id, board_id)
+            board_count = conn.execute("SELECT COUNT(*) AS n FROM boards WHERE owner_id = ?", (user_id,)).fetchone()["n"]
+            if board_count <= 1:
+                raise CannotDeleteLastBoardError("Cannot delete your only board")
+            with _write(conn):
+                conn.execute("DELETE FROM cards WHERE board_id = ?", (board_id,))
+                conn.execute("DELETE FROM columns WHERE board_id = ?", (board_id,))
+                conn.execute("DELETE FROM boards WHERE id = ?", (board_id,))

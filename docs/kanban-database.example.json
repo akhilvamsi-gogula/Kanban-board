@@ -3,8 +3,7 @@
   "users": [
     {
       "id": "demo-user",
-      "username": "user",
-      "board_id": "q3-product-launch"
+      "username": "user"
     }
   ],
   "boards": [

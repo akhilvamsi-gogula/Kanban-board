@@ -226,6 +226,8 @@ This phase follows the tested Part 6 API.
 
 ## Part 8: OpenRouter Connectivity
 
+**Superseded:** the AI provider was later migrated from OpenRouter to Groq (`api.groq.com`, OpenAI-compatible) for reliability - Groq's free tier runs on dedicated hardware rather than a shared/oversubscribed pool, which also avoided OpenRouter account billing complexity. `GROQ_API_KEY`/`GROQ_MODEL`/`GROQ_TIMEOUT_MS` replace the `OPENROUTER_*` variables below; the default model became `openai/gpt-oss-20b` served directly by Groq rather than `openai/gpt-oss-20b:free` via OpenRouter. The design decisions recorded below (optional provider, backend-only credentials, 15s timeout, no automatic retry) carried over unchanged to the Groq integration. See `CLAUDE.md` for the current provider configuration.
+
 This phase requires an explicit checkpoint for credentials, cost controls, privacy, and network access before a live provider call.
 
 ### Checklist
@@ -287,6 +289,35 @@ This phase follows the stable structured AI contract from Part 9.
 - [x] Frontend update handling applies accepted structured AI updates through the existing save path.
 - [ ] Playwright tests cover a live chat workflow on desktop and mobile; this remains environment-dependent because it consumes provider quota.
 - [x] The core Kanban workflow remains usable when AI is closed, unavailable, rate-limited, or failing.
+
+## Part 11: Multi-Board Support
+
+This phase follows the stable single-board persistence and AI integration from Parts 7–10. It relaxes the "one board per user" rule established in Part 5/6 to "one or more boards per user," while keeping every other MVP constraint (fixed 5 renameable columns per board, card title+details only, no search/archive) unchanged.
+
+### Checklist
+
+- [x] Relax the SQLite schema's 1:1 user:board enforcement (`boards.owner_id UNIQUE` → a plain indexed column) via an idempotent, detection-based migration in `KanbanRepository.__init__` (no `schema_version` field; the codebase has never tracked one) - non-destructive, since every existing row was already exactly one board per user.
+- [x] Drop the vestigial `users.board_id` column (written at signup, never read by the repository) as part of the same migration.
+- [x] Add `list_boards`, `create_board`, and `delete_board` to `KanbanRepository`; scope `get_board`/`save_board` to `(user_id, board_id)` with an explicit ownership check.
+- [x] Replace `GET/PUT /api/board` with `GET/POST /api/boards` and `GET/PUT/DELETE /api/boards/{board_id}` - a clean cutover, no deprecated alias, since frontend and backend deploy together.
+- [x] Decide cross-user access behavior: a board id that exists but isn't owned by the caller returns 404 (not 403), so it's indistinguishable from a genuinely nonexistent id.
+- [x] Decide the delete-last-board rule: every account always keeps at least one board; deleting your only board is rejected with 409. This avoids ever needing a zero-board empty state.
+- [x] Add a client-side (not URL-routed) board switcher: `frontend/app/page.tsx` tracks `boards`/`activeBoardId` as state, not a new `/boards/[id]` route - there was no routing infrastructure to build on (everything lived at `/`), and nothing requires shareable board URLs.
+- [x] Guard against a save-in-flight race when switching boards: `persistBoard` in `page.tsx` captures the board id being saved and discards a stale response/rollback if the active board has since changed.
+- [x] Fix the pre-existing AI co-pilot stub that hardcoded `id: "demo-user-board", owner_id: "demo-user"` in `board.tsx` - it now receives the real active board's identity via props.
+- [x] Add a `BoardSwitcher` component (new boards, switching, deleting) in the topbar, following the existing `RenameColumnDialog`/`DeleteCardDialog` dialog pattern for the new `CreateBoardDialog`/`DeleteBoardDialog`.
+
+### Tests and success criteria
+
+- [x] Backend: board-route tests rewritten for the `/api/boards/*` shape; new tests cover list/create/delete, cross-board isolation, cross-user 404, not-found 404, cannot-delete-last-board 409, and a dedicated migration test that hand-builds a legacy-schema SQLite file and confirms it migrates cleanly.
+- [x] Frontend: `home.test.tsx` mocks updated to the new routes; new tests cover creating/switching boards and a race test (switch boards while a save is in flight; the stale response must not clobber the newly active board).
+- [x] Playwright: existing "My board" heading assertions remain valid unchanged; a new e2e test covers create/switch/isolate across boards and confirms the active board survives a reload.
+- [x] Full validation suite passes: backend `uv run pytest -q` (37 tests), frontend lint/`tsc`/Vitest (23 tests)/build/Playwright (8 tests, desktop + mobile).
+
+### Part 11 decisions
+
+- No "last active board" persistence server-side - the frontend defaults to the first board in `list_boards()` order, keeping `get_board`/`save_board` read paths free of write side effects.
+- No board sharing/collaboration, no folders/workspaces, no per-board permissions - each board still belongs to exactly one user; this is a scoped relaxation of the 1:1 constraint, not a new collaboration feature.
 
 ## Cross-Phase Completion Checks
 

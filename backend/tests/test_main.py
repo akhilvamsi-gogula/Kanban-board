@@ -1,4 +1,5 @@
 import asyncio
+import sqlite3
 
 import httpx
 import pytest
@@ -53,11 +54,41 @@ def _signup(username: str = "alice", password: str = "correct-horse-battery") ->
     return response.json()
 
 
-def test_get_board_initializes_seeded_board(tmp_path, monkeypatch) -> None:
+def _first_board_id() -> str:
+    return client.get("/api/boards").json()[0]["id"]
+
+
+def _valid_board_payload(name: str = "Bad") -> dict:
+    return {
+        "name": name,
+        "columns": [
+            {"id": "backlog", "name": "Backlog", "accent": "#8b95a5", "position": 0, "cards": []},
+            {"id": "up-next", "name": "Up next", "accent": "#ecad0a", "position": 1, "cards": []},
+            {"id": "in-progress", "name": "In progress", "accent": "#209dd7", "position": 2, "cards": []},
+            {"id": "review", "name": "Review", "accent": "#753991", "position": 3, "cards": []},
+            {"id": "done", "name": "Done", "accent": "#2f9d70", "position": 4, "cards": []},
+        ],
+    }
+
+
+def test_list_boards_returns_seeded_board_after_signup(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
     _signup()
 
-    response = client.get("/api/board")
+    response = client.get("/api/boards")
+
+    assert response.status_code == 200
+    boards = response.json()
+    assert len(boards) == 1
+    assert boards[0]["name"] == "My board"
+
+
+def test_get_board_initializes_seeded_board(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    board_id = _first_board_id()
+
+    response = client.get(f"/api/boards/{board_id}")
 
     assert response.status_code == 200
     body = response.json()
@@ -69,14 +100,15 @@ def test_get_board_initializes_seeded_board(tmp_path, monkeypatch) -> None:
 def test_update_board_persists_column_and_card_changes(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
     _signup()
-    original = client.get("/api/board").json()
+    board_id = _first_board_id()
+    original = client.get(f"/api/boards/{board_id}").json()
     original["columns"][3]["name"] = "QA"
     card = {"id": "qa-release", "title": "QA the release", "details": "", "position": 0}
     original["columns"][3]["cards"] = [card]
     payload = {"name": original["name"], "columns": original["columns"]}
 
-    update_response = client.put("/api/board", json=payload)
-    read_response = client.get("/api/board")
+    update_response = client.put(f"/api/boards/{board_id}", json=payload)
+    read_response = client.get(f"/api/boards/{board_id}")
 
     assert update_response.status_code == 200
     assert read_response.json()["columns"][3]["name"] == "QA"
@@ -86,8 +118,9 @@ def test_update_board_persists_column_and_card_changes(tmp_path, monkeypatch) ->
 def test_board_api_rejects_invalid_column_count(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
     _signup()
+    board_id = _first_board_id()
 
-    invalid_response = client.put("/api/board", json={"name": "Bad", "columns": []})
+    invalid_response = client.put(f"/api/boards/{board_id}", json={"name": "Bad", "columns": []})
 
     assert invalid_response.status_code == 422
 
@@ -95,11 +128,205 @@ def test_board_api_rejects_invalid_column_count(tmp_path, monkeypatch) -> None:
 def test_board_endpoints_require_authentication(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
 
-    get_response = client.get("/api/board")
-    put_response = client.put("/api/board", json={"name": "Bad", "columns": []})
+    list_response = client.get("/api/boards")
+    create_response = client.post("/api/boards", json={"name": "New board"})
+    get_response = client.get("/api/boards/some-id")
+    put_response = client.put("/api/boards/some-id", json={"name": "Bad", "columns": []})
+    patch_response = client.patch("/api/boards/some-id", json={"name": "Bad"})
+    delete_response = client.delete("/api/boards/some-id")
 
+    assert list_response.status_code == 401
+    assert create_response.status_code == 401
     assert get_response.status_code == 401
     assert put_response.status_code == 401
+    assert patch_response.status_code == 401
+    assert delete_response.status_code == 401
+
+
+def test_create_board_adds_new_board_with_default_columns(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    seeded_id = _first_board_id()
+
+    response = client.post("/api/boards", json={"name": "Second board"})
+
+    assert response.status_code == 201
+    body = response.json()
+    assert body["name"] == "Second board"
+    assert len(body["columns"]) == 5
+    assert body["id"] != seeded_id
+    listed_ids = {board["id"] for board in client.get("/api/boards").json()}
+    assert listed_ids == {seeded_id, body["id"]}
+
+
+def test_create_board_rejects_invalid_name(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+
+    response = client.post("/api/boards", json={"name": ""})
+
+    assert response.status_code == 422
+
+
+def test_boards_are_isolated_by_id(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    first_id = _first_board_id()
+    second = client.post("/api/boards", json={"name": "Second board"}).json()
+
+    second_board = client.get(f"/api/boards/{second['id']}").json()
+    second_board["columns"][0]["cards"] = [
+        {"id": "only-on-second", "title": "Only here", "details": "", "position": 0}
+    ]
+    client.put(f"/api/boards/{second['id']}", json={"name": second_board["name"], "columns": second_board["columns"]})
+
+    first_board = client.get(f"/api/boards/{first_id}").json()
+    assert all(not column["cards"] for column in first_board["columns"])
+
+
+def test_cannot_access_another_users_board(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup(username="board-owner")
+    owner_board_id = _first_board_id()
+    client.post("/api/auth/logout")
+    _signup(username="intruder")
+
+    get_response = client.get(f"/api/boards/{owner_board_id}")
+    put_response = client.put(f"/api/boards/{owner_board_id}", json=_valid_board_payload("Hijacked"))
+    delete_response = client.delete(f"/api/boards/{owner_board_id}")
+
+    assert get_response.status_code == 404
+    assert put_response.status_code == 404
+    assert delete_response.status_code == 404
+
+
+def test_board_not_found_returns_404(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+
+    get_response = client.get("/api/boards/does-not-exist")
+    put_response = client.put("/api/boards/does-not-exist", json=_valid_board_payload())
+    delete_response = client.delete("/api/boards/does-not-exist")
+
+    assert get_response.status_code == 404
+    assert put_response.status_code == 404
+    assert delete_response.status_code == 404
+
+
+def test_delete_board_removes_it_from_list(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    seeded_id = _first_board_id()
+    second = client.post("/api/boards", json={"name": "Second board"}).json()
+
+    delete_response = client.delete(f"/api/boards/{second['id']}")
+    listed_ids = {board["id"] for board in client.get("/api/boards").json()}
+    get_after_delete = client.get(f"/api/boards/{second['id']}")
+
+    assert delete_response.status_code == 204
+    assert listed_ids == {seeded_id}
+    assert get_after_delete.status_code == 404
+
+
+def test_cannot_delete_last_board(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    board_id = _first_board_id()
+
+    response = client.delete(f"/api/boards/{board_id}")
+
+    assert response.status_code == 409
+
+
+def test_rename_board(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    board_id = _first_board_id()
+
+    response = client.patch(f"/api/boards/{board_id}", json={"name": "Renamed board"})
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Renamed board"
+    assert client.get("/api/boards").json()[0]["name"] == "Renamed board"
+
+
+def test_rename_board_rejects_invalid_name(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup()
+    board_id = _first_board_id()
+
+    response = client.patch(f"/api/boards/{board_id}", json={"name": ""})
+
+    assert response.status_code == 422
+
+
+def test_cannot_rename_another_users_board(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+    _signup(username="board-owner-2")
+    owner_board_id = _first_board_id()
+    client.post("/api/auth/logout")
+    _signup(username="intruder-2")
+
+    response = client.patch(f"/api/boards/{owner_board_id}", json={"name": "Hijacked"})
+
+    assert response.status_code == 404
+
+
+def test_repository_migrates_legacy_unique_owner_constraint(tmp_path) -> None:
+    database_path = tmp_path / "legacy.db"
+    connection = sqlite3.connect(database_path)
+    connection.executescript(
+        """
+        CREATE TABLE users (
+          id TEXT PRIMARY KEY,
+          username TEXT NOT NULL UNIQUE,
+          password_hash TEXT NOT NULL,
+          board_id TEXT NOT NULL,
+          created_at TEXT NOT NULL
+        );
+        CREATE TABLE boards (
+          id TEXT PRIMARY KEY,
+          owner_id TEXT NOT NULL UNIQUE,
+          name TEXT NOT NULL
+        );
+        CREATE TABLE columns (
+          row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL,
+          board_id TEXT NOT NULL,
+          name TEXT NOT NULL,
+          accent TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          UNIQUE(board_id, id)
+        );
+        CREATE TABLE cards (
+          row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          id TEXT NOT NULL,
+          board_id TEXT NOT NULL,
+          column_id TEXT NOT NULL,
+          title TEXT NOT NULL,
+          details TEXT NOT NULL,
+          position INTEGER NOT NULL,
+          UNIQUE(board_id, id)
+        );
+        """
+    )
+    connection.execute(
+        "INSERT INTO users (id, username, password_hash, board_id, created_at) VALUES (?, ?, ?, ?, ?)",
+        ("legacy-user", "legacy", "hash", "legacy-board", "2024-01-01T00:00:00+00:00"),
+    )
+    connection.execute(
+        "INSERT INTO boards (id, owner_id, name) VALUES (?, ?, ?)", ("legacy-board", "legacy-user", "My board")
+    )
+    connection.commit()
+    connection.close()
+
+    repository = KanbanRepository(database_path)
+
+    second_board = repository.create_board("legacy-user", "Second board")
+    boards = repository.list_boards("legacy-user")
+
+    assert second_board.id != "legacy-board"
+    assert {board.id for board in boards} == {"legacy-board", second_board.id}
 
 
 def test_corrupt_database_returns_server_error(tmp_path, monkeypatch) -> None:
@@ -367,6 +594,42 @@ def test_ai_chat_does_not_retry_when_no_change_was_claimed(monkeypatch) -> None:
     assert response.status_code == 200
     assert response.json()["board_update"] is None
     assert call_count["n"] == 1
+
+
+def test_ai_chat_retries_when_card_update_omits_title(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    call_count = {"n": 0}
+
+    class FakeResponse:
+        def __init__(self, content: str) -> None:
+            self.status_code = 200
+            self._content = content
+
+        def json(self):
+            return {"choices": [{"message": {"content": self._content}}]}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            # A model that uses "name" instead of "title" for a card must not pass
+            # validation silently - that shape mismatch used to slip through and only
+            # fail later, invisibly, when the frontend tried to save it.
+            return FakeResponse(
+                '{"assistant_message": "Added a card.", '
+                '"board_update": {"columns": [{"id": "backlog", "cards": [{"id": "c1", "name": "x", "details": ""}]}]}}'
+            )
+        return FakeResponse(
+            '{"assistant_message": "Added a card.", '
+            '"board_update": {"columns": [{"id": "backlog", "cards": [{"id": "c1", "title": "x", "details": ""}]}]}}'
+        )
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.post("/api/ai/chat", json={"prompt": "add a card"})
+
+    assert response.status_code == 200
+    assert response.json()["board_update"]["columns"][0]["cards"][0]["title"] == "x"
+    assert call_count["n"] == 2
 
 
 def test_ai_health_check_succeeds_with_valid_provider_response(monkeypatch) -> None:
