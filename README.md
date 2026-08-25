@@ -2,6 +2,12 @@
 
 A full-stack, multi-user Kanban app - real accounts, private boards, drag-and-drop cards, and an AI co-pilot that can edit the board on your behalf. Built to demonstrate production-adjacent patterns (session auth, ownership-scoped data access, optimistic UI, structured LLM output) inside a deliberately small, well-tested scope.
 
+## Live Demo
+
+**App:** https://kanban-board-seven-lilac.vercel.app/
+
+The backend is hosted on Render's free tier, which spins down after inactivity - the first request after a period of idle can take 30-50 seconds to wake it up, so give sign-in a moment before assuming it's stuck.
+
 ![Kanban board screenshot](docs/kanban-board-screenshot.png)
 
 ## Highlights
@@ -101,4 +107,4 @@ cd frontend && npm run lint && npx tsc --noEmit && npm run test -- --run && npm 
 
 ## Further Reading
 
-This README is intentionally short. For the full data model, API surface, request-scoping rules, AI-proxy contract, and the reasoning behind specific design decisions, see [`CLAUDE.md`](CLAUDE.md) (technical/architecture reference) and [`AGENTS.md`](AGENTS.md) (original product requirements and coding standards).
+For the full data model, API surface, request-scoping rules, AI-proxy contract, and the reasoning behind specific design decisions, see [`CLAUDE.md`](CLAUDE.md) (technical/architecture reference) and [`AGENTS.md`](AGENTS.md) (original product requirements and coding standards).
