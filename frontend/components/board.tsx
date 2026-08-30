@@ -215,7 +215,7 @@ export function Board({
       </form>
       </aside>
     </>}
-    <footer className="board-footer"><span>Five steps, one shared direction.</span><span className="footer-key"><span className="key-dot" /> Changes live in this session only</span></footer>
+    <footer className="board-footer"><span>Five steps, one shared direction.</span><span className="footer-key"><span className="key-dot" /> Changes save automatically to your account</span></footer>
     {cardDialog && <CardFormDialog card={cardDialog.card} onClose={() => setCardDialog(null)} onSubmit={cardDialog.card ? updateCard : addCard} />}
     {renameColumn && <RenameColumnDialog column={renameColumn} onClose={() => setRenameColumn(null)} onSubmit={updateColumnName} />}
     {deleteCard && <DeleteCardDialog card={deleteCard} onClose={() => setDeleteCard(null)} onConfirm={confirmDelete} />}
