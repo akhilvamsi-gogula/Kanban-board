@@ -1,7 +1,7 @@
 "use client";
 
 import { FormEvent, useState } from "react";
-import { ArrowRight, KeyRound, LockKeyhole, UserPlus } from "lucide-react";
+import { ArrowRight, Eye, EyeOff, KeyRound, LockKeyhole, UserPlus } from "lucide-react";
 import { forgotPassword, resetPassword, signIn, signUp, type AuthUser } from "../lib/api";
 
 type SignInProps = {
@@ -13,6 +13,44 @@ type AuthView = "sign-in" | "sign-up" | "forgot-password" | "reset-password";
 function tokenFromLocation(): string {
   if (typeof window === "undefined") return "";
   return new URLSearchParams(window.location.search).get("reset_token") ?? "";
+}
+
+type PasswordFieldProps = {
+  id: string;
+  name: string;
+  label: string;
+  autoComplete: string;
+  value: string;
+  onChange: (value: string) => void;
+};
+
+function PasswordField({ id, name, label, autoComplete, value, onChange }: PasswordFieldProps) {
+  const [visible, setVisible] = useState(false);
+
+  return (
+    <>
+      <label htmlFor={id}>{label}</label>
+      <div className="auth-password-field">
+        <input
+          id={id}
+          name={name}
+          type={visible ? "text" : "password"}
+          autoComplete={autoComplete}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button
+          type="button"
+          className="auth-password-toggle"
+          onClick={() => setVisible((current) => !current)}
+          aria-label={visible ? "Hide password" : "Show password"}
+          aria-pressed={visible}
+        >
+          {visible ? <EyeOff size={17} /> : <Eye size={17} />}
+        </button>
+      </div>
+    </>
+  );
 }
 
 export function SignIn({ onSignIn }: SignInProps) {
@@ -113,10 +151,8 @@ export function SignIn({ onSignIn }: SignInProps) {
           <form className="auth-form" onSubmit={handleSignUp} noValidate>
             <label htmlFor="signup-username">Username</label>
             <input id="signup-username" name="username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
-            <label htmlFor="signup-password">Password</label>
-            <input id="signup-password" name="password" type="password" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} />
-            <label htmlFor="signup-confirm-password">Confirm password</label>
-            <input id="signup-confirm-password" name="confirmPassword" type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
+            <PasswordField id="signup-password" name="password" label="Password" autoComplete="new-password" value={password} onChange={setPassword} />
+            <PasswordField id="signup-confirm-password" name="confirmPassword" label="Confirm password" autoComplete="new-password" value={confirmPassword} onChange={setConfirmPassword} />
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button type="submit" className="button button-primary" disabled={isSubmitting}>Create account <ArrowRight size={17} /></button>
           </form>
@@ -165,8 +201,7 @@ export function SignIn({ onSignIn }: SignInProps) {
           <form className="auth-form" onSubmit={handleResetPassword} noValidate>
             <label htmlFor="reset-token">Reset token</label>
             <input id="reset-token" name="token" type="text" value={resetToken} onChange={(event) => setResetToken(event.target.value)} />
-            <label htmlFor="reset-new-password">New password</label>
-            <input id="reset-new-password" name="newPassword" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+            <PasswordField id="reset-new-password" name="newPassword" label="New password" autoComplete="new-password" value={newPassword} onChange={setNewPassword} />
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button type="submit" className="button button-primary" disabled={isSubmitting}>Reset password <ArrowRight size={17} /></button>
           </form>
@@ -186,8 +221,7 @@ export function SignIn({ onSignIn }: SignInProps) {
         <form className="auth-form" onSubmit={handleSignIn} noValidate>
           <label htmlFor="username">Username</label>
           <input id="username" name="username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
-          <label htmlFor="password">Password</label>
-          <input id="password" name="password" type="password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <PasswordField id="password" name="password" label="Password" autoComplete="current-password" value={password} onChange={setPassword} />
           {error && <p className="auth-error" role="alert">{error}</p>}
           <button type="submit" className="button button-primary" disabled={isSubmitting}>Open board <ArrowRight size={17} /></button>
         </form>

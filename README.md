@@ -12,7 +12,7 @@ The backend is hosted on Render's free tier, which spins down after inactivity -
 
 ## Highlights
 
-- **Real auth, not a demo stub** - signup/login/logout/forgot-password, bcrypt-hashed passwords, server-side sessions via an httpOnly cookie (no JWT-in-localStorage), session/reset tokens stored only as SHA-256 hashes.
+- **Real auth, not a demo stub** - signup/login/logout/forgot-password, bcrypt-hashed passwords, server-side sessions via an httpOnly cookie (no JWT-in-localStorage), session/reset tokens stored only as SHA-256 hashes, with a show/hide toggle on every password field.
 - **Multi-board data model** - every board query is ownership-scoped (`WHERE id = %s AND owner_id = %s`); a board that exists but isn't yours returns 404, not 403, so its existence is never leaked.
 - **Persistent by design** - data lives in Postgres, not the web service's own filesystem, so accounts and boards survive a redeploy or an idle spin-down instead of resetting with the container.
 - **Optimistic UI with race protection** - local edits apply instantly and roll back on a failed save; a save in flight for a board the user has since switched away from is discarded instead of clobbering the newly active board.

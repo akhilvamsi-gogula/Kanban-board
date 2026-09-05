@@ -442,6 +442,31 @@ This phase follows a QA-perspective review of the whole application (backend, fr
 - The AI eval harness stays a manual script, not a scheduled GitHub Action - it costs real Groq quota per run and asserts against a non-deterministic model, so gating anything on it (or running it unattended on a schedule against a shared free-tier key) was judged the wrong tradeoff for this project's scale.
 - Mypy/ruff for the backend, dependency vulnerability scanning, coverage measurement, and cross-browser/accessibility/visual-regression e2e coverage were all identified in the same review but are not part of this phase - listed here so they aren't lost, not because they're unimportant.
 
+## Part 16: Password Visibility Toggle
+
+Small, user-requested UX fix: every password field (sign-in, sign-up password + confirm password, reset-password's new password) is a raw `type="password"` input with no way to check what was typed before submitting.
+
+### Checklist
+
+- [x] Add a reusable `PasswordField` component (`frontend/components/sign-in.tsx`) wrapping each password `<input>` with an eye/eye-off icon button (`lucide-react`'s `Eye`/`EyeOff`) that toggles `type` between `password` and `text`. Each field's visibility state is local and independent - toggling one field's visibility does not affect any other.
+- [x] Style the toggle in `frontend/app/globals.css` (`.auth-password-field`, `.auth-password-toggle`) as an absolutely-positioned button inside the existing input, with `padding-right` on the input so typed text never runs under the icon.
+- [x] Keep the existing `<label htmlFor>`/`id` association unchanged so accessibility and existing `getByLabelText`-based component tests keep working without modification; the toggle button gets its own `aria-label` ("Show password" / "Hide password") and `aria-pressed` state instead of reusing the field's label.
+- [x] Fix a real regression this introduced: Playwright's `getByLabel` matches by substring by default (unlike Testing Library's exact-by-default `getByLabelText`), so the toggle button's `aria-label="Show password"` made `page.getByLabel("Password")` in `frontend/e2e/kanban.spec.ts` ambiguous (matched both the input and the button). Fixed the two non-exact call sites (`signIn` helper, wrong-password assertion) to pass `{ exact: true }`, matching the pattern the `signUp` helper already used.
+
+### Tests and success criteria
+
+- [x] `npm run lint` passes.
+- [x] `npx tsc --noEmit` passes.
+- [x] `npm run test -- --run` passes: 37 tests, unchanged - `getByLabelText` locators were unaffected since Testing Library matches labels exactly by default.
+- [x] `npm run build` passes.
+- [x] `npm run test:e2e` passes: 10 tests (desktop + mobile), after the `{ exact: true }` fix above - first run surfaced the ambiguous-locator failure on both viewports for `requires sign-in and supports logout`, confirming the fix was necessary rather than precautionary.
+- [x] `uv run pytest -q` (backend) passes: 66 tests, unaffected since this is a frontend-only change.
+
+### Part 16 decisions
+
+- Visibility state lives per-field (not one shared toggle for the whole form) so revealing the sign-up password doesn't also reveal the confirm-password field - matches how most password managers and browsers implement the same affordance.
+- No new automated test added specifically for the toggle's click behavior (show text, click again, hide) - judged low-risk, standard-pattern UI with no business logic; existing lint/type/build/e2e coverage already exercises the changed files.
+
 ## Cross-Phase Completion Checks
 
 - [x] Update this document when requirements or architectural decisions change.

@@ -15,7 +15,7 @@ async function signUp(page: Page, username: string, password: string) {
 
 async function signIn(page: Page, username: string, password: string) {
   const usernameField = page.getByLabel("Username");
-  const passwordField = page.getByLabel("Password");
+  const passwordField = page.getByLabel("Password", { exact: true });
   await usernameField.fill("");
   await passwordField.fill("");
   await usernameField.click();
@@ -127,7 +127,7 @@ test("requires sign-in and supports logout", async ({ page }) => {
   await expect(page.getByRole("heading", { name: "Sign in to Kanban board" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "My board" })).not.toBeVisible();
   await page.getByLabel("Username").fill(username);
-  await page.getByLabel("Password").fill("wrongpassword");
+  await page.getByLabel("Password", { exact: true }).fill("wrongpassword");
   await page.getByRole("button", { name: "Open board" }).click();
   await expect(page.locator(".auth-error")).toBeVisible();
 
