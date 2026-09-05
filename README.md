@@ -13,7 +13,8 @@ The backend is hosted on Render's free tier, which spins down after inactivity -
 ## Highlights
 
 - **Real auth, not a demo stub** - signup/login/logout/forgot-password, bcrypt-hashed passwords, server-side sessions via an httpOnly cookie (no JWT-in-localStorage), session/reset tokens stored only as SHA-256 hashes.
-- **Multi-board data model** - every board query is ownership-scoped (`WHERE id = ? AND owner_id = ?`); a board that exists but isn't yours returns 404, not 403, so its existence is never leaked. Ships with an idempotent, `PRAGMA`-introspection-based migration that safely upgrades the original single-board schema in place.
+- **Multi-board data model** - every board query is ownership-scoped (`WHERE id = %s AND owner_id = %s`); a board that exists but isn't yours returns 404, not 403, so its existence is never leaked.
+- **Persistent by design** - data lives in Postgres, not the web service's own filesystem, so accounts and boards survive a redeploy or an idle spin-down instead of resetting with the container.
 - **Optimistic UI with race protection** - local edits apply instantly and roll back on a failed save; a save in flight for a board the user has since switched away from is discarded instead of clobbering the newly active board.
 - **AI co-pilot with structured output** - the backend proxies to Groq, validates that every response is well-formed `{assistant_message, board_update?}` JSON before it ever reaches the UI, and retries once on a malformed or incomplete response. `GROQ_API_KEY` never reaches the browser.
 - **Tested across three layers** - FastAPI unit/integration tests, Vitest + Testing Library component tests, and Playwright end-to-end tests (desktop and mobile viewports).
@@ -25,7 +26,7 @@ flowchart LR
     Browser["Browser\nReact client board"]
     Next["Next.js 16\nApp Router · rewrite proxy"]
     API["FastAPI\nsession auth · ownership checks · rate limits"]
-    DB[("SQLite (WAL)\nusers · boards · columns · cards")]
+    DB[("Postgres\nusers · boards · columns · cards")]
     Groq["Groq API\ngpt-oss-20b"]
 
     Browser -- "httpOnly session cookie" --> Next
@@ -51,7 +52,7 @@ That single prompt touched two different parts of the board (a new card *and* a 
 | Layer | Choices |
 |---|---|
 | Frontend | Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind CSS v4, `@dnd-kit` for drag-and-drop |
-| Backend | FastAPI, SQLite (WAL mode), bcrypt, [uv](https://docs.astral.sh/uv/) for dependency management |
+| Backend | FastAPI, Postgres (Neon in production, Docker Compose locally), bcrypt, [uv](https://docs.astral.sh/uv/) for dependency management |
 | AI | Groq (`openai/gpt-oss-20b`), server-side only, structured-response validation |
 | Testing | pytest, Vitest + Testing Library, Playwright (e2e, multi-viewport) |
 | Infra | Docker Compose for the backend |
@@ -69,17 +70,17 @@ Set `GROQ_API_KEY` in `.env` to enable the AI co-pilot (free at [console.groq.co
 cd frontend && npm install && npm run dev   # -> http://localhost:3000
 ```
 
-Prefer running the backend without Docker? `cd backend && uv sync && uv run uvicorn app.main:app --host 127.0.0.1 --port 8000`.
+Prefer running the backend without Docker? Start Postgres separately (`docker compose up -d postgres`, or point at a hosted instance), then `cd backend && uv sync && DATABASE_URL=postgresql://kanban:kanban@localhost:5432/kanban uv run uvicorn app.main:app --host 127.0.0.1 --port 8000`.
 
 Sign up with any username/password to get a seeded board, then add cards, drag them between columns, create additional boards from the switcher in the top bar, and try the AI co-pilot with a prompt like `Rename Backlog to Ideas`.
 
 ## Testing
 
-76 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
+75 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
 
 | Layer | Tool | Tests | Covers |
 |---|---|---|---|
-| Unit / integration | pytest | 41 | auth, sessions, board CRUD and ownership, schema migration, the AI proxy contract, rate limiting |
+| Unit / integration | pytest (against a real Postgres instance) | 40 | auth, sessions, board CRUD and ownership, the AI proxy contract, rate limiting |
 | Component | Vitest + Testing Library | 25 | sign-in/sign-up flows, board interactions, optimistic save/rollback, multi-board switching |
 | End-to-end | Playwright (desktop + mobile viewports) | 10 | full user journeys in a real browser against a real backend |
 
@@ -101,6 +102,7 @@ Two frontend tests exist because I reproduced real bugs first, then kept the rep
 ### Run it yourself
 
 ```bash
+docker compose up -d postgres --wait   # backend tests need Postgres reachable at localhost:5432
 cd backend && uv run pytest -q
 cd frontend && npm run lint && npx tsc --noEmit && npm run test -- --run && npm run build && npm run test:e2e
 ```

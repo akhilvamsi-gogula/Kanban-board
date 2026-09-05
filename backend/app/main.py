@@ -30,7 +30,6 @@ from .models import (
     UserResponse,
 )
 from .repository import (
-    DEFAULT_DATA_PATH,
     BoardNotFoundError,
     CannotDeleteLastBoardError,
     DataStoreError,
@@ -39,7 +38,7 @@ from .repository import (
 )
 
 app = FastAPI(title="Kanban Backend", version="0.1.0")
-repository = KanbanRepository(Path(os.environ["KANBAN_DATA_PATH"]) if "KANBAN_DATA_PATH" in os.environ else DEFAULT_DATA_PATH)
+repository = KanbanRepository(os.environ["DATABASE_URL"])
 cors_origins = [origin for origin in os.getenv("KANBAN_CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000").split(",") if origin]
 app.add_middleware(
     CORSMiddleware,
