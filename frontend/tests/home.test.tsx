@@ -122,6 +122,45 @@ describe("Home session lifecycle", () => {
     expect(submittedRequest.history.some((message) => message.content === "How many cards are there?")).toBe(false);
   });
 
+  it("does not carry AI assistant chat history over to a different account signing in afterward", async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": (options) => {
+        const { username } = JSON.parse(String(options?.body));
+        return { status: 200, body: { id: username === "alice" ? "1" : "2", username } };
+      },
+      "POST /backend-api/auth/logout": () => ({ status: 200, body: {} }),
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: "q3-product-launch", name: "Q3 product launch" }] }),
+      "GET /backend-api/boards/q3-product-launch": () => ({ status: 200, body: makeApiBoard() }),
+      "POST /backend-api/ai/chat": () => ({ status: 200, body: { assistant_message: "Added five random test cards across all columns." } }),
+    });
+    render(<Home />);
+
+    await screen.findByLabelText("Username");
+    await user.type(screen.getByLabelText("Username"), "alice");
+    await user.type(screen.getByLabelText("Password"), "password");
+    await user.click(screen.getByRole("button", { name: "Open board" }));
+
+    await user.click(await screen.findByRole("button", { name: "AI assistant" }));
+    await user.type(screen.getByLabelText("Ask the board assistant"), "Add random cards for testing");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(await screen.findByText("Added five random test cards across all columns.")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Log out" }));
+
+    await screen.findByLabelText("Username");
+    await user.type(screen.getByLabelText("Username"), "bob");
+    await user.type(screen.getByLabelText("Password"), "password");
+    await user.click(screen.getByRole("button", { name: "Open board" }));
+
+    await user.click(await screen.findByRole("button", { name: "AI assistant" }));
+    expect(screen.queryByText("Add random cards for testing")).not.toBeInTheDocument();
+    expect(screen.queryByText("Added five random test cards across all columns.")).not.toBeInTheDocument();
+    expect(screen.getByText("Ask me to rename a column, add a task, or update the board.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Ask the board assistant")).toHaveValue("");
+  });
+
   it("rolls back a failed save and retries it", async () => {
     const user = userEvent.setup();
     const apiBoard = makeApiBoard();
