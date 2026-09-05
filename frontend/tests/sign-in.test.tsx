@@ -75,6 +75,67 @@ describe("SignIn", () => {
     expect(api.signUp).not.toHaveBeenCalled();
   });
 
+  it("shows a server error when sign up fails, e.g. a duplicate username", async () => {
+    const user = userEvent.setup();
+    const onSignIn = vi.fn();
+    vi.mocked(api.signUp).mockRejectedValue(new Error("Username is already taken"));
+    render(<SignIn onSignIn={onSignIn} />);
+
+    await user.click(screen.getByRole("button", { name: "Don't have an account? Sign up" }));
+    await user.type(screen.getByLabelText("Username"), "taken");
+    await user.type(screen.getByLabelText("Password"), "password123");
+    await user.type(screen.getByLabelText("Confirm password"), "password123");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Username is already taken");
+    expect(onSignIn).not.toHaveBeenCalled();
+  });
+
+  it("disables the submit button while a sign-in request is in flight", async () => {
+    const user = userEvent.setup();
+    let resolveSignIn: (user: api.AuthUser) => void = () => {};
+    vi.mocked(api.signIn).mockReturnValue(new Promise((resolve) => { resolveSignIn = resolve; }));
+    render(<SignIn onSignIn={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("Username"), "alice");
+    await user.type(screen.getByLabelText("Password"), "password123");
+    const submitButton = screen.getByRole("button", { name: "Open board" });
+    await user.click(submitButton);
+
+    expect(submitButton).toBeDisabled();
+    resolveSignIn({ id: "1", username: "alice" });
+    await vi.waitFor(() => expect(submitButton).not.toBeDisabled());
+  });
+
+  it("shows the generic message without a reset link for an unknown username", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.forgotPassword).mockResolvedValue({
+      message: "If that account exists, a reset link was generated.",
+      reset_token: null,
+    });
+    render(<SignIn onSignIn={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Forgot password?" }));
+    await user.type(screen.getByLabelText("Username"), "nobody");
+    await user.click(screen.getByRole("button", { name: "Send reset link" }));
+
+    expect(await screen.findByText(/reset link was generated/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Reset your password" })).not.toBeInTheDocument();
+  });
+
+  it("shows an error and stays on the reset screen when the token is invalid or expired", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.resetPassword).mockRejectedValue(new Error("Invalid or expired reset token"));
+    window.history.replaceState({}, "", "/?reset_token=stale-token");
+    render(<SignIn onSignIn={vi.fn()} />);
+
+    await user.type(await screen.findByLabelText("New password"), "newpassword123");
+    await user.click(screen.getByRole("button", { name: "Reset password" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid or expired reset token");
+    expect(screen.getByRole("heading", { name: "Reset your password" })).toBeInTheDocument();
+  });
+
   it("requests a password reset and can jump to the reset screen with the token pre-filled", async () => {
     const user = userEvent.setup();
     vi.mocked(api.forgotPassword).mockResolvedValue({

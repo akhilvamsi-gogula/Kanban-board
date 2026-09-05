@@ -134,6 +134,87 @@ def test_board_api_rejects_invalid_column_count() -> None:
     assert invalid_response.status_code == 422
 
 
+def test_board_api_rejects_duplicate_column_ids() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][1]["id"] = payload["columns"][0]["id"]
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_board_api_rejects_duplicate_card_ids_across_columns() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["cards"] = [{"id": "dup", "title": "First", "details": "", "position": 0}]
+    payload["columns"][1]["cards"] = [{"id": "dup", "title": "Second", "details": "", "position": 0}]
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_board_api_rejects_non_contiguous_card_positions() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["cards"] = [
+        {"id": "card-a", "title": "A", "details": "", "position": 0},
+        {"id": "card-b", "title": "B", "details": "", "position": 2},
+    ]
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_board_api_rejects_card_id_not_matching_pattern() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["cards"] = [{"id": "Not-Lowercase", "title": "Bad id", "details": "", "position": 0}]
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_board_api_rejects_card_title_over_max_length() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["cards"] = [{"id": "too-long", "title": "x" * 201, "details": "", "position": 0}]
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 422
+
+
+def test_board_api_accepts_card_title_at_max_length_boundary() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["cards"] = [{"id": "exactly-max", "title": "x" * 200, "details": "", "position": 0}]
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["columns"][0]["cards"][0]["title"] == "x" * 200
+
+
+def test_board_api_rejects_board_name_over_max_length() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload(name="x" * 121)
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 422
+
+
 def test_board_endpoints_require_authentication() -> None:
     list_response = client.get("/api/boards")
     create_response = client.post("/api/boards", json={"name": "New board"})
@@ -301,6 +382,58 @@ def test_login_succeeds_with_correct_password_and_fails_with_wrong_one() -> None
     assert bad_response.status_code == 401
 
 
+def test_login_fails_for_nonexistent_username_with_same_generic_message() -> None:
+    _signup(username="known-user", password="right-password")
+    client.post("/api/auth/logout")
+
+    response = client.post("/api/auth/login", json={"username": "no-such-user", "password": "whatever1"})
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == "Invalid username or password"
+
+
+@pytest.mark.parametrize(
+    "username,password",
+    [
+        ("ab", "correct-horse-battery"),  # username below 3-char minimum
+        ("x" * 33, "correct-horse-battery"),  # username above 32-char maximum
+        ("bad user!", "correct-horse-battery"),  # username has disallowed characters
+        ("valid-name", "short12"),  # password below 8-char minimum
+    ],
+)
+def test_signup_rejects_invalid_username_or_password(username: str, password: str) -> None:
+    response = client.post("/api/auth/signup", json={"username": username, "password": password})
+
+    assert response.status_code == 422
+
+
+def test_signup_accepts_boundary_length_username_and_password() -> None:
+    response = client.post("/api/auth/signup", json={"username": "abc", "password": "x" * 8})
+
+    assert response.status_code == 201
+
+    client.post("/api/auth/logout")
+    response = client.post("/api/auth/signup", json={"username": "y" * 32, "password": "z" * 128})
+
+    assert response.status_code == 201
+
+
+def test_password_longer_than_bcrypt_limit_still_authenticates_consistently() -> None:
+    # bcrypt only considers the first 72 bytes of input (see repository._hash_password);
+    # passwords sharing that 72-byte prefix are indistinguishable to it - a known
+    # limitation, not a bug, and worth pinning down so a future change doesn't silently
+    # start rejecting long passwords or start treating them as unique beyond byte 72.
+    shared_prefix = "p" * 72
+    _signup(username="grace", password=shared_prefix + "-original-tail")
+    client.post("/api/auth/logout")
+
+    same_prefix_response = client.post(
+        "/api/auth/login", json={"username": "grace", "password": shared_prefix + "-different-tail"}
+    )
+
+    assert same_prefix_response.status_code == 200
+
+
 def test_me_requires_authentication() -> None:
 
     response = client.get("/api/auth/me")
@@ -342,6 +475,60 @@ def test_forgot_password_reset_then_login_flow() -> None:
     assert reset_response.status_code == 200
     assert old_password_response.status_code == 401
     assert new_password_response.status_code == 200
+
+
+def test_reset_password_rejects_invalid_token() -> None:
+    response = client.post("/api/auth/reset-password", json={"token": "not-a-real-token", "new_password": "new-password"})
+
+    assert response.status_code == 400
+
+
+def test_reset_password_rejects_reusing_an_already_used_token() -> None:
+    _signup(username="gina", password="old-password")
+    client.post("/api/auth/logout")
+    reset_token = client.post("/api/auth/forgot-password", json={"username": "gina"}).json()["reset_token"]
+    first_use = client.post("/api/auth/reset-password", json={"token": reset_token, "new_password": "new-password-1"})
+
+    second_use = client.post("/api/auth/reset-password", json={"token": reset_token, "new_password": "new-password-2"})
+
+    assert first_use.status_code == 200
+    assert second_use.status_code == 400
+
+
+def test_reset_password_rejects_expired_token() -> None:
+    _signup(username="hank", password="old-password")
+    client.post("/api/auth/logout")
+    reset_token = client.post("/api/auth/forgot-password", json={"username": "hank"}).json()["reset_token"]
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute("UPDATE password_resets SET expires_at = '2000-01-01T00:00:00+00:00'")
+        conn.commit()
+
+    response = client.post("/api/auth/reset-password", json={"token": reset_token, "new_password": "new-password"})
+
+    assert response.status_code == 400
+
+
+def test_reset_password_invalidates_existing_sessions() -> None:
+    _signup(username="ivan", password="old-password")
+    me_before = client.get("/api/auth/me")
+    reset_token = client.post("/api/auth/forgot-password", json={"username": "ivan"}).json()["reset_token"]
+
+    client.post("/api/auth/reset-password", json={"token": reset_token, "new_password": "new-password"})
+    me_after = client.get("/api/auth/me")
+
+    assert me_before.status_code == 200
+    assert me_after.status_code == 401
+
+
+def test_expired_session_requires_reauthentication() -> None:
+    _signup(username="jill")
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute("UPDATE sessions SET expires_at = '2000-01-01T00:00:00+00:00'")
+        conn.commit()
+
+    response = client.get("/api/auth/me")
+
+    assert response.status_code == 401
 
 
 def test_ai_health_check_requires_api_key(monkeypatch) -> None:
@@ -496,6 +683,40 @@ def test_ai_chat_logs_null_ids_when_called_without_a_board(monkeypatch) -> None:
         {"user_id": None, "board_id": None, "role": "user"},
         {"user_id": None, "board_id": None, "role": "assistant"},
     ]
+
+
+def test_ai_chat_rejects_prompt_over_max_length(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    response = client.post("/api/ai/chat", json={"prompt": "x" * 2001})
+
+    assert response.status_code == 422
+
+
+def test_ai_chat_forwards_only_the_last_eight_history_messages(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+    sent_messages = {}
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"assistant_message":"Got it."}'}}]}
+
+    async def fake_post(self, url: str, *, headers: dict[str, str], json: dict) -> FakeResponse:
+        sent_messages["messages"] = json["messages"]
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    history = [{"role": "user" if i % 2 == 0 else "assistant", "content": f"message {i}"} for i in range(12)]
+    response = client.post("/api/ai/chat", json={"prompt": "Latest question", "history": history})
+
+    assert response.status_code == 200
+    # messages[0] is the system prompt, then the last 8 history entries, then the new prompt.
+    forwarded_history = sent_messages["messages"][1:9]
+    assert [message["content"] for message in forwarded_history] == [f"message {i}" for i in range(4, 12)]
+    assert sent_messages["messages"][9]["content"] == "Latest question"
 
 
 def test_ai_chat_retries_once_on_malformed_response_then_succeeds(monkeypatch) -> None:
@@ -724,6 +945,17 @@ def test_ai_rate_limit_blocks_excess_requests(monkeypatch) -> None:
     responses = [client.get("/api/ai/check") for _ in range(4)]
 
     assert [response.status_code for response in responses] == [503, 503, 503, 429]
+    assert "too many" in responses[-1].json()["detail"].lower()
+
+
+def test_auth_rate_limit_blocks_excess_requests(monkeypatch) -> None:
+    monkeypatch.setattr(main, "AUTH_RATE_LIMIT_MAX_REQUESTS", 3)
+
+    responses = [
+        client.post("/api/auth/login", json={"username": "nobody", "password": "irrelevant"}) for _ in range(4)
+    ]
+
+    assert [response.status_code for response in responses] == [401, 401, 401, 429]
     assert "too many" in responses[-1].json()["detail"].lower()
 
 
