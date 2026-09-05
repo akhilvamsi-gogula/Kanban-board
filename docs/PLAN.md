@@ -290,9 +290,42 @@ This phase follows the stable structured AI contract from Part 9.
 - [ ] Playwright tests cover a live chat workflow on desktop and mobile; this remains environment-dependent because it consumes provider quota.
 - [x] The core Kanban workflow remains usable when AI is closed, unavailable, rate-limited, or failing.
 
-## Part 11: Multi-Board Support
+## Part 11: Multi-User Authentication
 
-This phase follows the stable single-board persistence and AI integration from Parts 7–10. It relaxes the "one board per user" rule established in Part 5/6 to "one or more boards per user," while keeping every other MVP constraint (fixed 5 renameable columns per board, card title+details only, no search/archive) unchanged.
+This phase follows the stable AI-assisted single-board application from Parts 7–10. It replaces the Part 4 fake sign-in gate (hardcoded `user`/`password`, client-only session) with real accounts, and moves board storage off the shared JSON file from Part 5/6 onto a per-account SQLite store.
+
+### Checklist
+
+- [x] Add sign up, sign in, sign out, and forgot/reset password, backed by bcrypt-hashed passwords.
+- [x] Move sessions server-side, tracked via an httpOnly `kanban_session` cookie (no JWT-in-localStorage).
+- [x] Migrate board storage from the shared `kanban-database.json` file to SQLite (`backend/app/repository.py`), with relational tables (`users`, `boards`, `columns`, `cards`, `sessions`, `password_resets`) linked by id.
+- [x] Give every account its own private board, seeded from the same `DEFAULT_COLUMNS` the JSON store used - still exactly one board per user at this point (relaxed to many in Part 12).
+- [x] Re-scope board endpoints from `user_id`-in-the-URL to session-derived identity (`GET/PUT /api/board`, no id parameter yet).
+- [x] Decide the password-reset UX: no real email provider - `POST /api/auth/forgot-password` returns the reset token directly in its response, and the frontend displays it/the reset link on screen. Documented as an explicit, deliberate limitation (local/single-instance app), not an oversight.
+- [x] Store session tokens and password-reset tokens only as SHA-256 hashes, never raw.
+- [x] Sync `CLAUDE.md`, `README.md`, and the frontend sign-in screen to the new real-auth flow, replacing every reference to the Part 4 demo credentials.
+
+### Tests and success criteria
+
+- [x] Backend unit/integration tests cover signup, duplicate-username rejection, login (correct/incorrect password), logout, session expiry, and the full forgot-password → reset-password → login-with-new-password flow.
+- [x] Frontend component tests cover the sign-up/sign-in/forgot-password forms and the logged-out → logged-in → logged-out transition against the real API instead of the old client-only demo gate.
+- [x] Playwright covers a real signup-through-board workflow at desktop and mobile widths.
+- [x] No password or session token is ever logged, returned in an error message, or stored unhashed.
+
+### Part 11 validation record
+
+- [x] Backend suite passes: 28 tests (up from 22 pre-auth), covering auth, sessions, password reset, and the now-session-scoped board routes.
+- [x] Frontend suite passes: 21 unit tests (up from 15) across `board.test.tsx`, `home.test.tsx`, and a substantially rewritten `sign-in.test.tsx`; Playwright covers the signup-to-board workflow at desktop and mobile widths.
+- [x] `CLAUDE.md`/`README.md` updated to describe real accounts, bcrypt, and SQLite in place of the fake sign-in and JSON store.
+
+### Part 11 decisions
+
+- No real email delivery, OAuth/SSO, or production-hardening (HTTPS enforcement, secret rotation, multi-instance session storage) - this remains a local/single-instance app by design, per the project's "keep it simple" convention, not a gap to close later.
+- Passwords are bcrypt-hashed with the standard 72-byte truncation; this is a known bcrypt limitation, not treated as a bug.
+
+## Part 12: Multi-Board Support
+
+This phase follows the stable single-board persistence, AI integration, and multi-user authentication from Parts 7–11. It relaxes the "one board per user" rule established in Part 11 to "one or more boards per user," while keeping every other MVP constraint (fixed 5 renameable columns per board, card title+details only, no search/archive) unchanged.
 
 ### Checklist
 
@@ -306,18 +339,56 @@ This phase follows the stable single-board persistence and AI integration from P
 - [x] Guard against a save-in-flight race when switching boards: `persistBoard` in `page.tsx` captures the board id being saved and discards a stale response/rollback if the active board has since changed.
 - [x] Fix the pre-existing AI co-pilot stub that hardcoded `id: "demo-user-board", owner_id: "demo-user"` in `board.tsx` - it now receives the real active board's identity via props.
 - [x] Add a `BoardSwitcher` component (new boards, switching, deleting) in the topbar, following the existing `RenameColumnDialog`/`DeleteCardDialog` dialog pattern for the new `CreateBoardDialog`/`DeleteBoardDialog`.
+- [x] Fix a bug found while testing the switcher: renaming a board did nothing, because the backend had no `PATCH /api/boards/{board_id}` route at all - added it.
+- [x] Fix a second switcher bug: re-selecting the already-active board got stuck on "Loading your board..." forever, caused by a `useEffect` dependency array that didn't re-fire for a same-id reselect.
+- [x] Harden the AI co-pilot's `board_update` validation to check every card's `id`/`title` shape, not just column shape - closes a gap where a model response using `name` instead of `title` passed validation, silently failed to save, and rolled back while the chat still claimed success. The system prompt now spells out the exact card field names.
 
 ### Tests and success criteria
 
 - [x] Backend: board-route tests rewritten for the `/api/boards/*` shape; new tests cover list/create/delete, cross-board isolation, cross-user 404, not-found 404, cannot-delete-last-board 409, and a dedicated migration test that hand-builds a legacy-schema SQLite file and confirms it migrates cleanly.
 - [x] Frontend: `home.test.tsx` mocks updated to the new routes; new tests cover creating/switching boards and a race test (switch boards while a save is in flight; the stale response must not clobber the newly active board).
 - [x] Playwright: existing "My board" heading assertions remain valid unchanged; a new e2e test covers create/switch/isolate across boards and confirms the active board survives a reload.
-- [x] Full validation suite passes: backend `uv run pytest -q` (37 tests), frontend lint/`tsc`/Vitest (23 tests)/build/Playwright (8 tests, desktop + mobile).
+- [x] A regression test pins down the AI field-name-drift fix (`test_ai_chat_retries_when_card_update_omits_title`), written after reproducing the bug by hand while capturing a demo screenshot.
+- [x] Full validation suite passes: backend `uv run pytest -q` (41 tests), frontend lint/`tsc`/Vitest (25 tests)/build/Playwright (5 tests × 2 viewports = 10 runs).
 
-### Part 11 decisions
+### Part 12 decisions
 
 - No "last active board" persistence server-side - the frontend defaults to the first board in `list_boards()` order, keeping `get_board`/`save_board` read paths free of write side effects.
 - No board sharing/collaboration, no folders/workspaces, no per-board permissions - each board still belongs to exactly one user; this is a scoped relaxation of the 1:1 constraint, not a new collaboration feature.
+
+## Part 13: Persistent Postgres Storage
+
+This phase follows the deployed app from Part 12 (live on Vercel + Render, per the README's Live Demo section). It replaces SQLite with Postgres as the backend's storage engine, prompted by discovering that neither the local Docker setup nor the Render deployment actually persisted data across a restart.
+
+### Checklist
+
+- [x] Diagnose why deployed data wasn't surviving: `docker-compose.yml` had no volume mount for `backend/data`, and the Dockerfile only copied `app/`, so the SQLite file lived only in each container's throwaway writable layer - `docker compose down` (what `scripts/stop.sh` runs) destroyed it every time. Render's free web-service tier has no persistent-disk option at all, and idle spin-down/redeploys hand the app a brand-new container.
+- [x] Choose a fix: a managed Postgres database as a separate, independently-persistent service, rather than a paid Render disk (would keep SQLite but cost ~$7/mo and tie storage to one service instance).
+- [x] Pick Neon as the provider: its free tier has no expiry (unlike Render's own free Postgres, which auto-deletes after 30 days) and auto-wakes on the next query after scaling to zero, matching the app's existing cold-start-after-idle behavior.
+- [x] Rewrite `backend/app/repository.py` from `sqlite3` to `psycopg`/Postgres: `%s` placeholders, `dict_row` cursor factory (keeps `row["col"]` access unchanged), `BIGSERIAL`/`BOOLEAN` in place of SQLite's `AUTOINCREMENT`/`INTEGER`-as-bool, `psycopg.errors.UniqueViolation` in place of `sqlite3.IntegrityError`. Drop the Part 12 PRAGMA-introspection migration entirely - it only exists to repair a legacy SQLite shape with no Postgres equivalent.
+- [x] Add a `boards.row_id BIGSERIAL` column purely to preserve insertion order for `list_boards` - Postgres has no implicit `rowid` the way SQLite did, and the frontend's `activeBoardId` default depends on that order being stable.
+- [x] Switch `KanbanRepository`/`main.py` from a `KANBAN_DATA_PATH` file path to a required `DATABASE_URL` connection string - fail fast at startup if unset, rather than silently falling back to a path that no longer means anything.
+- [x] Standardize on Postgres everywhere (dev, test, prod) rather than keeping SQLite as a second code path behind an abstraction layer - decided as unnecessary complexity for this project's "keep it simple" convention. Local dev/test Postgres runs as a `postgres` service in `docker-compose.yml`, backed by a named volume.
+- [x] Update `backend/tests/test_main.py` to run against real Postgres: an autouse fixture truncates all tables between tests instead of each test getting its own SQLite file via `tmp_path`. Drop the SQLite-only legacy-migration test; rewrite the corrupt-database test to drop a table instead of writing garbage bytes into a file.
+- [x] Sync `.env.example`, `CLAUDE.md`, `README.md`, and `backend/README.md` to describe `DATABASE_URL` - `backend/README.md` was also fixing pre-existing staleness (it still described the long-gone JSON store, a `demo-user`, and `/api/users/{id}/board` routes from before Part 11) while in there.
+
+### Tests and success criteria
+
+- [x] Backend suite passes against real Postgres, not just SQLite.
+- [x] A local Docker Compose cycle (`up --build` → sign up → `down` → `up --build` again, i.e. exactly what `scripts/stop.sh`/`start.sh` do) proves the account and board survive, which they did not before this phase.
+- [x] The exact production code path (`uv run uvicorn` with `DATABASE_URL` set to the real Neon connection string) is exercised locally - signup, board read, and a direct query against Neon confirming the rows landed - before anything is pushed to the branch Render auto-deploys from.
+- [ ] After merge: confirm a Render service restart no longer wipes data (the original bug this phase fixes), now against the real deployment.
+
+### Part 13 validation record
+
+- [x] Backend suite passes: 40 tests (41 minus the dropped SQLite-migration test, plus one rewritten corrupt-database test) against a real Postgres instance.
+- [x] Verified locally end-to-end twice: once against local Docker Postgres (survives `docker compose down`/`up`), once against the real Neon database used by the Render deployment (verified via direct query, not just HTTP response).
+- [x] Opened as [PR #12](https://github.com/akhilvamsi-gogula/Kanban-board/pull/12) (`postgres-persistence` → `main`) rather than committed straight to `main`, so the Render-redeploy verification step above happens after review/merge.
+
+### Part 13 decisions
+
+- No migration of pre-existing local/deployed SQLite data - both were already effectively lost/ephemeral test data, so the new Postgres schema starts empty rather than writing a one-off import script for throwaway rows.
+- Timestamps stay `TEXT` (ISO strings) in Postgres rather than becoming native `TIMESTAMPTZ` columns - not idiomatic Postgres, but it avoids touching the existing `_isoformat`/`_parse` helpers for no behavioral gain, since comparisons already happen in Python.
 
 ## Cross-Phase Completion Checks
 
@@ -326,3 +397,29 @@ This phase follows the stable single-board persistence and AI integration from P
 - [x] Keep tests close to the behavior they protect and avoid unrelated feature work.
 - [x] Run the relevant validation commands before declaring a phase complete.
 - [x] Do not commit secrets, generated test artifacts, or local database data.
+
+## Learnings
+
+Non-obvious lessons from building and shipping this project, kept here so they inform future decisions instead of being re-learned.
+
+**"Works when I test it" and "actually persists" are different claims.** Part 13 exists because the app behaved correctly in every manual test - signup worked, boards saved, the AI co-pilot ran - while silently losing all of that data on every container restart. Day-to-day development never restarts the container, so an ephemeral-storage bug like this is invisible until someone specifically tests the restart/redeploy path. Any "is this persistent?" claim needs its own explicit test (stop the process, start it again, check the data), not an inference from the feature otherwise working.
+
+**A missing volume mount and a missing persistent-disk tier fail identically: silently.** Neither Docker (`docker-compose.yml` had no volume for `backend/data`) nor Render's free tier (no persistent-disk option at all) raised an error - they just discarded state on the next container. Infra that "works" without an explicit persistence declaration should be assumed ephemeral until proven otherwise.
+
+**Local code changes and a deployed app are two different states, even on a solo project with one branch.** Mid-way through Part 13, `DATABASE_URL` was set on Render and a Neon connection string pasted in, and the frontend still "worked fine" - because the live Render service was still running the old SQLite code from `main`; nothing had been pushed yet. Verify against the exact commit that's actually deployed, not the one on disk locally.
+
+**Verify against the real target before it's live, when you can.** Rather than pushing straight to `main` (which auto-deploys) to see if the Postgres migration worked, the same code was run locally with `DATABASE_URL` pointed at the real Neon connection string first - same code path, same database, zero deployment risk. Confirming end-to-end against production-shaped infrastructure without touching production is usually possible and worth the extra step.
+
+**A field-name typo from a small LLM can look like success.** The Part 12 AI-hardening fix exists because a model returned a card using `name` instead of `title`; validation checked column shape but not every card field, so the bad update passed validation, failed to save, rolled back - and the chat still said it succeeded. Validate the leaves of a structure an LLM produces, not just its outline, and treat "the assistant claims a change happened" and "a valid `board_update` was actually returned" as two separate facts to check (this became `CLAIMED_CHANGE_PATTERN` server-side).
+
+**Schema migrations don't require a version table to be safe.** Part 12's legacy single-board-schema upgrade has no `schema_version` field anywhere in this codebase; it detects the old shape structurally (a `UNIQUE` constraint via `PRAGMA` introspection) and only migrates when that shape is actually found. Detection-based migrations are a legitimate lighter-weight alternative to version tracking when there's exactly one legacy shape to detect.
+
+**Prefer "indistinguishable from nonexistent" over "exists but forbidden" for ownership-scoped resources.** Both Part 11 (sessions) and Part 12 (multi-board ownership) return 404, never 403, for a resource that exists but isn't the caller's - so a bad guess can't be used to enumerate which ids are real. Decided once in Part 12 and it fell out naturally everywhere else ownership checks were added.
+
+**A capture-and-compare guard beats a lock for optimistic-UI races.** The stale-save race fixed in Part 12 (switching boards while a save is still in flight) isn't solved with a mutex - `persistBoard` just captures which board id it's saving for and discards its own result if the active board has changed by the time it resolves. Cheap, and correct without blocking the UI.
+
+**Generic CLI onboarding scripts can carry more scope than the task needs, even from a legitimate, official tool.** The Neon CLI onboarding script pasted in during Part 13 was genuine (verified via `npm view`, not a typosquat), but running it as given would have minted an account-wide MCP API key and provisioned an object-storage bucket - neither related to "get a Postgres connection string." Checking `--help` output before running unfamiliar `-y`/auto-confirm flags surfaced this before anything was installed.
+
+**Evaluate a "free" provider tier by its actual guarantees, not just its price.** The Groq migration (superseding Part 8's OpenRouter integration) and the Neon-over-Render-free-Postgres choice in Part 13 both turned on the same axis: Groq's free tier runs on dedicated hardware rather than a shared/oversubscribed pool, and Neon's free tier has no expiry where Render's free Postgres auto-deletes after 30 days. "Free" tiers of the same-sounding feature can have materially different reliability/durability guarantees worth checking before picking one.
+
+**Mock the provider call, assert the contract - not the model's actual words.** Every AI-path backend test mocks the Groq HTTP call directly and asserts on the backend's own validation/retry contract (malformed JSON, a claimed-but-missing update, a wrong field name, a timeout), never on what a live model happens to say. This is what makes a non-deterministic feature testable deterministically, and it's how the field-name-drift regression above got a permanent test instead of a one-off fix.
