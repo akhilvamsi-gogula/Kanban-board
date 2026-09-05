@@ -382,6 +382,23 @@ def test_login_succeeds_with_correct_password_and_fails_with_wrong_one() -> None
     assert bad_response.status_code == 401
 
 
+def test_session_cookie_is_not_secure_by_default_for_local_http_dev() -> None:
+    response = client.post("/api/auth/signup", json={"username": "cookie-check", "password": "correct-horse-battery"})
+
+    set_cookie = response.headers["set-cookie"].lower()
+    assert "httponly" in set_cookie
+    assert "samesite=lax" in set_cookie
+    assert "secure" not in set_cookie
+
+
+def test_session_cookie_is_secure_when_running_on_render(monkeypatch) -> None:
+    monkeypatch.setattr(main, "SESSION_COOKIE_SECURE", True)
+
+    response = client.post("/api/auth/signup", json={"username": "cookie-check-render", "password": "correct-horse-battery"})
+
+    assert "secure" in response.headers["set-cookie"].lower()
+
+
 def test_login_fails_for_nonexistent_username_with_same_generic_message() -> None:
     _signup(username="known-user", password="right-password")
     client.post("/api/auth/logout")

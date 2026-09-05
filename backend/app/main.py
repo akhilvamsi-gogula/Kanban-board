@@ -65,6 +65,10 @@ for _error_type in REPOSITORY_ERROR_STATUS:
 
 SESSION_COOKIE_NAME = "kanban_session"
 SESSION_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
+# Render sets RENDER=true on every service it runs, which is the deployed, HTTPS-only
+# environment; local dev/Docker Compose serve plain HTTP, where a Secure cookie would
+# never be sent back by the browser at all.
+SESSION_COOKIE_SECURE = bool(os.getenv("RENDER"))
 
 AUTH_RATE_LIMIT_MAX_REQUESTS = 20
 AUTH_RATE_LIMIT_WINDOW_SECONDS = 60
@@ -100,7 +104,7 @@ def _set_session_cookie(response: Response, token: str) -> None:
         max_age=SESSION_COOKIE_MAX_AGE_SECONDS,
         httponly=True,
         samesite="lax",
-        secure=False,
+        secure=SESSION_COOKIE_SECURE,
         path="/",
     )
 

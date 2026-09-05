@@ -48,6 +48,8 @@ uv run pytest -q tests/test_main.py::test_name
 ```
 Full backend suite: `uv run pytest -q` (from `backend/`). Add a dependency with `uv add <package>` (or `uv add --group dev <package>` for dev-only); this updates `pyproject.toml` and `uv.lock` together - don't hand-edit the lockfile.
 
+`.github/workflows/ci.yml` runs the backend suite (against a Postgres service container) and the frontend lint/`tsc`/Vitest/build steps on every push to `main` and every pull request - it does not run Playwright e2e (needs browser binaries + a live backend/DB, so it's a separate, heavier concern) or `backend/eval/ai_eval.py` (calls the real Groq model, costs quota, and is non-deterministic by nature - see `backend/eval/README.md`; run it by hand after changing the AI system prompt, `GROQ_MODEL`, or `board_update` validation).
+
 If port 8000 is taken, run uvicorn on another port and set `KANBAN_BACKEND_URL` for the frontend (e.g. `KANBAN_BACKEND_URL=http://127.0.0.1:8001 npm run dev`).
 
 Backend connectivity check (consumes Groq free-tier quota, requires a configured key): `curl http://127.0.0.1:8000/api/ai/check`.

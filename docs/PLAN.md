@@ -418,6 +418,30 @@ This phase follows the deployed Postgres migration from Part 13. It started from
 - No new API endpoint or frontend UI for `ai_chat_messages` - direct Postgres/Neon SQL queries are sufficient for the stated learning/analysis use case, and adding either would be scope beyond what was asked.
 - No persistence added for the AI assistant's chat history itself (e.g. `localStorage`) - the bug was React state outliving the account it belonged to, not the absence of durability; a `key`-based remount fixes that at zero backend cost and matches the project's "reset on refresh/logout" model for other client-only UI state.
 
+## Part 15: CI Pipeline, Session Cookie Hardening, and an AI Behavior Eval Harness
+
+This phase follows a QA-perspective review of the whole application (backend, frontend, security, performance, AI-specific testing) done in Part 14's spirit but broader in scope. It picks the three highest-leverage findings from that review and closes them.
+
+### Checklist
+
+- [x] Add `.github/workflows/ci.yml`: a `backend` job (Postgres 16 service container, `uv sync --frozen`, `uv run pytest -q`) and a `frontend` job (`npm ci`, lint, `tsc --noEmit`, Vitest, `next build`), both on push to `main` and on every pull request. Before this, all 66+37 tests only ever ran manually/locally - nothing stopped a broken commit from merging.
+- [x] Fix the session cookie's `secure` flag: it was hardcoded `secure=False` (`backend/app/main.py`), meaning it would still be transmitted over a downgraded plain-HTTP connection even though the deployed app is HTTPS-only. Now `SESSION_COOKIE_SECURE = bool(os.getenv("RENDER"))` - Render sets `RENDER=true` on every service it runs, so this is `True` in production and `False` for local dev/Docker Compose (plain HTTP), with no new required config to remember to set.
+- [x] Add `backend/eval/ai_eval.py`, a manual (not CI, not pytest) regression harness that sends real prompts to the live Groq model through a running backend and asserts on the structured `board_update` contract, never on exact wording - the same "assert the contract, not the model's words" philosophy the mocked unit tests already use, applied to live-model drift detection instead of shape-handling. Covers: rename/add/remove-card happy paths, a pure question that should produce no `board_update`, a guardrail probe (asking for extra columns, which the app must refuse), and an adversarial HTML-looking card title (confirming the backend stores it literally rather than mangling it).
+- [x] Ran the eval harness against the real model once: 5/6 passed. The one failure (`add_card`) returned a live 502 "Groq returned an invalid board update" after exhausting both retry attempts - a genuine, real instance of the small-model unreliability the backend's retry logic exists to paper over, caught by hitting the actual model rather than a mocked payload. A second run to confirm reproducibility instead hit Groq's own rate limit and then the app's own 10-req/min-per-IP limiter (`enforce_ai_rate_limit`), which is itself a useful confirmation that the limiter works as designed under rapid eval-harness traffic; further runs were deliberately not made to avoid spending more of the shared Groq free-tier quota than needed to make the point.
+
+### Tests and success criteria
+
+- [x] `test_session_cookie_is_not_secure_by_default_for_local_http_dev` and `test_session_cookie_is_secure_when_running_on_render` (`backend/tests/test_main.py`) pin both branches of the new cookie logic.
+- [x] Backend suite passes: 66 tests (up from 64 at the end of Part 14).
+- [x] `eval/ai_eval.py --help` runs; the harness itself was exercised against the real Groq API as described above (not part of the automated suite by design).
+- [x] CI workflow YAML is syntactically valid and mirrors the exact commands documented in `CLAUDE.md`/`backend/README.md` for local validation, so a green CI run means the same thing a developer's local check means.
+
+### Part 15 decisions
+
+- The CI workflow intentionally excludes Playwright e2e - it needs browser binaries and a live backend+DB, making it a slower, heavier job better suited to a separate, optionally-triggered workflow than to a fast on-every-push gate. Not added this phase; noted as a follow-up.
+- The AI eval harness stays a manual script, not a scheduled GitHub Action - it costs real Groq quota per run and asserts against a non-deterministic model, so gating anything on it (or running it unattended on a schedule against a shared free-tier key) was judged the wrong tradeoff for this project's scale.
+- Mypy/ruff for the backend, dependency vulnerability scanning, coverage measurement, and cross-browser/accessibility/visual-regression e2e coverage were all identified in the same review but are not part of this phase - listed here so they aren't lost, not because they're unimportant.
+
 ## Cross-Phase Completion Checks
 
 - [x] Update this document when requirements or architectural decisions change.
