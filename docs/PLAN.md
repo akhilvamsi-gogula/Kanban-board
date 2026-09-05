@@ -398,6 +398,16 @@ This phase follows the deployed app from Part 12 (live on Vercel + Render, per t
 - [x] Run the relevant validation commands before declaring a phase complete.
 - [x] Do not commit secrets, generated test artifacts, or local database data.
 
+### "Is everything up to date?" - the fixed checklist
+
+Every prior sweep of this kind was ad hoc, which is why things kept slipping through and had to be re-caught later (see Learnings). Run *this exact list* every time, instead of improvising a fresh one:
+
+- [ ] `git branch -r` / `git log --all --not --remotes=origin/main` - any commit fixing a real bug or gap that isn't reachable from `main`? A fix on an abandoned branch is not a fix.
+- [ ] Does every merged feature commit since the last check have a corresponding Part in this document? Diff the commit list against the Part headings, don't rely on memory of "I think that's documented."
+- [ ] Grep the frontend for copy describing superseded behavior (`session only`, `demo`, `local only`, old credential names, old field/route names) - UI text drifts silently because nothing type-checks prose.
+- [ ] Grep root `README.md`, `backend/README.md`, `frontend/README.md`, and `CLAUDE.md` for the same category of drift, plus stale test counts and removed env var names.
+- [ ] State the check's scope explicitly in the answer (what was actually grepped/run, not just "yes, up to date") - an unqualified "yes" is what turns a partial check into a false claim.
+
 ## Learnings
 
 Non-obvious lessons from building and shipping this project, kept here so they inform future decisions instead of being re-learned.
