@@ -1,18 +1,17 @@
 # Backend
 
-The backend is a FastAPI service for board persistence and the optional AI co-pilot. It serves a smoke-test page at `/`, a health response at `/health`, and a JSON hello response at `/api/hello`.
+The backend is a FastAPI service for multi-user Kanban board persistence and the optional AI co-pilot. It serves a smoke-test page at `/`, a health response at `/health`, and a JSON hello response at `/api/hello`.
 
-Part 6 adds the user-scoped Kanban API:
+Auth routes: `POST /api/auth/{signup,login,logout,forgot-password,reset-password}`, `GET /api/auth/me`.
 
-- `GET /api/users/{user_id}/board` reads a validated board.
-- `PUT /api/users/{user_id}/board` replaces the validated board and persists it atomically.
+Board routes (session-scoped, ownership-checked): `GET /api/boards`, `POST /api/boards`, `GET/PUT/PATCH/DELETE /api/boards/{board_id}`.
 
 AI routes:
 
 - `GET /api/ai/check` performs a small Groq connectivity check.
 - `POST /api/ai/chat` accepts board context, a prompt, and limited chat history, then returns structured assistant text and an optional board update.
 
-The seeded demo user is `demo-user`. The JSON store is created at `backend/data/kanban.json` by default. Set `KANBAN_DATA_PATH` to use a different local path during development or tests.
+Data persists to Postgres, via the connection string in `DATABASE_URL` (required - the app fails to start without it). Locally, `docker compose up -d postgres` (from the repository root) starts one on `localhost:5432`; in production this points at a separate managed Postgres instance (e.g. Neon) so data survives the service redeploying or spinning down. See the root [`CLAUDE.md`](../CLAUDE.md) for the full data model.
 
 ## Environment and secrets
 
@@ -28,9 +27,10 @@ Set `GROQ_API_KEY` in that local file (get a free key at [console.groq.com](http
 ## Direct run
 
 ```bash
+docker compose up -d postgres --wait   # from the repository root, or point DATABASE_URL at your own Postgres
 cd backend
 uv sync
-uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
+DATABASE_URL=postgresql://kanban:kanban@localhost:5432/kanban uv run uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 `uv sync` creates `.venv` and installs pinned dependencies from `uv.lock`.
@@ -39,7 +39,10 @@ Open http://127.0.0.1:8000/.
 
 ## Tests
 
+Needs the same Postgres instance reachable (tests default to `postgresql://kanban:kanban@localhost:5432/kanban`; override with `TEST_DATABASE_URL`):
+
 ```bash
+docker compose up -d postgres --wait   # from the repository root
 cd backend
 uv run pytest
 ```
@@ -52,6 +55,6 @@ From the repository root:
 ./scripts/start.sh
 ```
 
-Open http://127.0.0.1:8000/. Stop the service with `./scripts/stop.sh`.
+This starts both the backend and a `postgres` service. Open http://127.0.0.1:8000/. Stop with `./scripts/stop.sh` (data persists in the `postgres_data` volume across this; `docker compose down -v` also removes the volume for a clean slate).
 
 In Codespaces, forward port 8000 to access the page from a browser. If Docker is unavailable, use the direct-run commands above.

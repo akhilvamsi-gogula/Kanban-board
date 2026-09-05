@@ -1,17 +1,15 @@
 import hashlib
 import secrets
-import sqlite3
 import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Iterator
 
 import bcrypt
+import psycopg
+import psycopg.rows
 
 from .models import BoardResponse, BoardSummary, BoardUpdate, CardModel, ColumnModel, UserResponse
-
-DEFAULT_DATA_PATH = Path(__file__).resolve().parents[1] / "data" / "kanban.db"
 
 SESSION_TTL = timedelta(days=7)
 RESET_TOKEN_TTL = timedelta(minutes=30)
@@ -33,13 +31,14 @@ CREATE TABLE IF NOT EXISTS users (
   created_at TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS boards (
+  row_id BIGSERIAL,
   id TEXT PRIMARY KEY,
   owner_id TEXT NOT NULL,
   name TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_boards_owner_id ON boards (owner_id);
 CREATE TABLE IF NOT EXISTS columns (
-  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  row_id BIGSERIAL PRIMARY KEY,
   id TEXT NOT NULL,
   board_id TEXT NOT NULL,
   name TEXT NOT NULL,
@@ -48,7 +47,7 @@ CREATE TABLE IF NOT EXISTS columns (
   UNIQUE(board_id, id)
 );
 CREATE TABLE IF NOT EXISTS cards (
-  row_id INTEGER PRIMARY KEY AUTOINCREMENT,
+  row_id BIGSERIAL PRIMARY KEY,
   id TEXT NOT NULL,
   board_id TEXT NOT NULL,
   column_id TEXT NOT NULL,
@@ -68,7 +67,7 @@ CREATE TABLE IF NOT EXISTS password_resets (
   user_id TEXT NOT NULL,
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
-  used INTEGER NOT NULL DEFAULT 0
+  used BOOLEAN NOT NULL DEFAULT FALSE
 );
 """
 
@@ -119,27 +118,27 @@ def _verify_password(password: str, password_hash: str) -> bool:
 
 
 @contextmanager
-def _write(conn: sqlite3.Connection) -> Iterator[None]:
+def _write(conn: psycopg.Connection) -> Iterator[None]:
     try:
         yield
         conn.commit()
-    except sqlite3.Error as error:
+    except psycopg.Error as error:
         conn.rollback()
         raise DataStoreError("Kanban database is not writable") from error
 
 
-def _insert_board(conn: sqlite3.Connection, board_id: str, owner_id: str, name: str) -> None:
-    conn.execute("INSERT INTO boards (id, owner_id, name) VALUES (?, ?, ?)", (board_id, owner_id, name))
+def _insert_board(conn: psycopg.Connection, board_id: str, owner_id: str, name: str) -> None:
+    conn.execute("INSERT INTO boards (id, owner_id, name) VALUES (%s, %s, %s)", (board_id, owner_id, name))
     for position, column in enumerate(DEFAULT_COLUMNS):
         conn.execute(
-            "INSERT INTO columns (id, board_id, name, accent, position) VALUES (?, ?, ?, ?, ?)",
+            "INSERT INTO columns (id, board_id, name, accent, position) VALUES (%s, %s, %s, %s, %s)",
             (column["id"], board_id, column["name"], column["accent"], position),
         )
 
 
-def _require_board(conn: sqlite3.Connection, user_id: str, board_id: str) -> sqlite3.Row:
+def _require_board(conn: psycopg.Connection, user_id: str, board_id: str) -> dict:
     board = conn.execute(
-        "SELECT id, owner_id, name FROM boards WHERE id = ? AND owner_id = ?", (board_id, user_id)
+        "SELECT id, owner_id, name FROM boards WHERE id = %s AND owner_id = %s", (board_id, user_id)
     ).fetchone()
     if board is None:
         raise BoardNotFoundError("Board not found")
@@ -147,61 +146,23 @@ def _require_board(conn: sqlite3.Connection, user_id: str, board_id: str) -> sql
 
 
 class KanbanRepository:
-    def __init__(self, path: Path = DEFAULT_DATA_PATH) -> None:
-        self.path = path
+    def __init__(self, database_url: str) -> None:
+        self.database_url = database_url
         self._lock = threading.RLock()
-        self.path.parent.mkdir(parents=True, exist_ok=True)
         with self._conn() as conn:
-            conn.executescript(SCHEMA)
-            self._migrate_relax_board_ownership(conn)
+            conn.execute(SCHEMA)
             conn.commit()
 
-    def _migrate_relax_board_ownership(self, conn: sqlite3.Connection) -> None:
-        # Older databases pinned each user to exactly one board, via a users.board_id
-        # column plus a UNIQUE constraint on boards.owner_id (both written by the same
-        # schema, so either one identifies the legacy shape). Neither can be dropped in
-        # place, so rebuild both tables. Non-destructive: every legacy row is already
-        # exactly one board per user, so relaxing the constraint loses no data.
-        if not any(row["name"] == "board_id" for row in conn.execute("PRAGMA table_info(users)")):
-            return
-        conn.executescript(
-            """
-            CREATE TABLE boards_migrated (
-              id TEXT PRIMARY KEY,
-              owner_id TEXT NOT NULL,
-              name TEXT NOT NULL
-            );
-            INSERT INTO boards_migrated (id, owner_id, name) SELECT id, owner_id, name FROM boards;
-            DROP TABLE boards;
-            ALTER TABLE boards_migrated RENAME TO boards;
-            CREATE INDEX IF NOT EXISTS idx_boards_owner_id ON boards (owner_id);
-
-            CREATE TABLE users_migrated (
-              id TEXT PRIMARY KEY,
-              username TEXT NOT NULL UNIQUE,
-              password_hash TEXT NOT NULL,
-              created_at TEXT NOT NULL
-            );
-            INSERT INTO users_migrated (id, username, password_hash, created_at)
-              SELECT id, username, password_hash, created_at FROM users;
-            DROP TABLE users;
-            ALTER TABLE users_migrated RENAME TO users;
-            """
-        )
-
     @contextmanager
-    def _conn(self) -> Iterator[sqlite3.Connection]:
+    def _conn(self) -> Iterator[psycopg.Connection]:
         with self._lock:
             try:
-                conn = sqlite3.connect(self.path, timeout=10)
-            except sqlite3.Error as error:
+                conn = psycopg.connect(self.database_url, row_factory=psycopg.rows.dict_row)
+            except psycopg.Error as error:
                 raise DataStoreError("Kanban database is not writable") from error
-            conn.row_factory = sqlite3.Row
             try:
-                conn.execute("PRAGMA journal_mode=WAL")
-                conn.execute("PRAGMA foreign_keys=ON")
                 yield conn
-            except sqlite3.DatabaseError as error:
+            except psycopg.Error as error:
                 raise DataStoreError("Kanban database is unreadable") from error
             finally:
                 conn.close()
@@ -215,29 +176,29 @@ class KanbanRepository:
         with self._conn() as conn:
             try:
                 conn.execute(
-                    "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
+                    "INSERT INTO users (id, username, password_hash, created_at) VALUES (%s, %s, %s, %s)",
                     (user_id, username, password_hash, _isoformat(_now())),
                 )
                 _insert_board(conn, board_id, user_id, DEFAULT_BOARD_NAME)
                 conn.commit()
-            except sqlite3.IntegrityError as error:
+            except psycopg.errors.UniqueViolation as error:
                 conn.rollback()
                 raise UsernameTakenError("Username is already taken") from error
-            except sqlite3.Error as error:
+            except psycopg.Error as error:
                 conn.rollback()
                 raise DataStoreError("Kanban database is not writable") from error
         return UserResponse(id=user_id, username=username)
 
     def authenticate_user(self, username: str, password: str) -> UserResponse | None:
         with self._conn() as conn:
-            row = conn.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,)).fetchone()
+            row = conn.execute("SELECT id, username, password_hash FROM users WHERE username = %s", (username,)).fetchone()
         if row is None or not _verify_password(password, row["password_hash"]):
             return None
         return UserResponse(id=row["id"], username=row["username"])
 
     def get_user(self, user_id: str) -> UserResponse | None:
         with self._conn() as conn:
-            row = conn.execute("SELECT id, username FROM users WHERE id = ?", (user_id,)).fetchone()
+            row = conn.execute("SELECT id, username FROM users WHERE id = %s", (user_id,)).fetchone()
         if row is None:
             return None
         return UserResponse(id=row["id"], username=row["username"])
@@ -249,7 +210,7 @@ class KanbanRepository:
         now = _now()
         with self._conn() as conn:
             conn.execute(
-                "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)",
+                "INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (%s, %s, %s, %s)",
                 (hash_token(token), user_id, _isoformat(now), _isoformat(now + SESSION_TTL)),
             )
             conn.commit()
@@ -259,38 +220,38 @@ class KanbanRepository:
         token_hash = hash_token(token)
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT user_id, expires_at FROM sessions WHERE token_hash = ?", (token_hash,)
+                "SELECT user_id, expires_at FROM sessions WHERE token_hash = %s", (token_hash,)
             ).fetchone()
             if row is None:
                 return None
             if _parse(row["expires_at"]) < _now():
-                conn.execute("DELETE FROM sessions WHERE token_hash = ?", (token_hash,))
+                conn.execute("DELETE FROM sessions WHERE token_hash = %s", (token_hash,))
                 conn.commit()
                 return None
-            user_row = conn.execute("SELECT id, username FROM users WHERE id = ?", (row["user_id"],)).fetchone()
+            user_row = conn.execute("SELECT id, username FROM users WHERE id = %s", (row["user_id"],)).fetchone()
         if user_row is None:
             return None
         return UserResponse(id=user_row["id"], username=user_row["username"])
 
     def delete_session(self, token: str) -> None:
         with self._conn() as conn:
-            conn.execute("DELETE FROM sessions WHERE token_hash = ?", (hash_token(token),))
+            conn.execute("DELETE FROM sessions WHERE token_hash = %s", (hash_token(token),))
             conn.commit()
 
-    def _delete_all_sessions_for_user(self, conn: sqlite3.Connection, user_id: str) -> None:
-        conn.execute("DELETE FROM sessions WHERE user_id = ?", (user_id,))
+    def _delete_all_sessions_for_user(self, conn: psycopg.Connection, user_id: str) -> None:
+        conn.execute("DELETE FROM sessions WHERE user_id = %s", (user_id,))
 
     # -- password reset -------------------------------------------------------
 
     def create_password_reset(self, username: str) -> str | None:
         with self._conn() as conn:
-            row = conn.execute("SELECT id FROM users WHERE username = ?", (username,)).fetchone()
+            row = conn.execute("SELECT id FROM users WHERE username = %s", (username,)).fetchone()
             if row is None:
                 return None
             token = secrets.token_urlsafe(32)
             now = _now()
             conn.execute(
-                "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at, used) VALUES (?, ?, ?, ?, 0)",
+                "INSERT INTO password_resets (token_hash, user_id, created_at, expires_at, used) VALUES (%s, %s, %s, %s, FALSE)",
                 (hash_token(token), row["id"], _isoformat(now), _isoformat(now + RESET_TOKEN_TTL)),
             )
             conn.commit()
@@ -300,15 +261,15 @@ class KanbanRepository:
         token_hash = hash_token(token)
         with self._conn() as conn:
             row = conn.execute(
-                "SELECT user_id, expires_at, used FROM password_resets WHERE token_hash = ?", (token_hash,)
+                "SELECT user_id, expires_at, used FROM password_resets WHERE token_hash = %s", (token_hash,)
             ).fetchone()
             if row is None or row["used"] or _parse(row["expires_at"]) < _now():
                 return False
             conn.execute(
-                "UPDATE users SET password_hash = ? WHERE id = ?",
+                "UPDATE users SET password_hash = %s WHERE id = %s",
                 (_hash_password(new_password), row["user_id"]),
             )
-            conn.execute("UPDATE password_resets SET used = 1 WHERE token_hash = ?", (token_hash,))
+            conn.execute("UPDATE password_resets SET used = TRUE WHERE token_hash = %s", (token_hash,))
             self._delete_all_sessions_for_user(conn, row["user_id"])
             conn.commit()
         return True
@@ -318,7 +279,7 @@ class KanbanRepository:
     def list_boards(self, user_id: str) -> list[BoardSummary]:
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT id, name FROM boards WHERE owner_id = ? ORDER BY rowid", (user_id,)
+                "SELECT id, name FROM boards WHERE owner_id = %s ORDER BY row_id", (user_id,)
             ).fetchall()
         return [BoardSummary(id=row["id"], name=row["name"]) for row in rows]
 
@@ -332,17 +293,17 @@ class KanbanRepository:
         with self._conn() as conn:
             _require_board(conn, user_id, board_id)
             with _write(conn):
-                conn.execute("UPDATE boards SET name = ? WHERE id = ?", (name, board_id))
+                conn.execute("UPDATE boards SET name = %s WHERE id = %s", (name, board_id))
         return self.get_board(user_id, board_id)
 
     def get_board(self, user_id: str, board_id: str) -> BoardResponse:
         with self._conn() as conn:
             board = _require_board(conn, user_id, board_id)
             column_rows = conn.execute(
-                "SELECT id, name, accent, position FROM columns WHERE board_id = ? ORDER BY position", (board_id,)
+                "SELECT id, name, accent, position FROM columns WHERE board_id = %s ORDER BY position", (board_id,)
             ).fetchall()
             card_rows = conn.execute(
-                "SELECT id, column_id, title, details, position FROM cards WHERE board_id = ? ORDER BY position",
+                "SELECT id, column_id, title, details, position FROM cards WHERE board_id = %s ORDER BY position",
                 (board_id,),
             ).fetchall()
         try:
@@ -369,17 +330,17 @@ class KanbanRepository:
         with self._conn() as conn:
             _require_board(conn, user_id, board_id)
             with _write(conn):
-                conn.execute("UPDATE boards SET name = ? WHERE id = ?", (board.name, board_id))
-                conn.execute("DELETE FROM columns WHERE board_id = ?", (board_id,))
-                conn.execute("DELETE FROM cards WHERE board_id = ?", (board_id,))
+                conn.execute("UPDATE boards SET name = %s WHERE id = %s", (board.name, board_id))
+                conn.execute("DELETE FROM columns WHERE board_id = %s", (board_id,))
+                conn.execute("DELETE FROM cards WHERE board_id = %s", (board_id,))
                 for column in board.columns:
                     conn.execute(
-                        "INSERT INTO columns (id, board_id, name, accent, position) VALUES (?, ?, ?, ?, ?)",
+                        "INSERT INTO columns (id, board_id, name, accent, position) VALUES (%s, %s, %s, %s, %s)",
                         (column.id, board_id, column.name, column.accent, column.position),
                     )
                     for card in column.cards:
                         conn.execute(
-                            "INSERT INTO cards (id, board_id, column_id, title, details, position) VALUES (?, ?, ?, ?, ?, ?)",
+                            "INSERT INTO cards (id, board_id, column_id, title, details, position) VALUES (%s, %s, %s, %s, %s, %s)",
                             (card.id, board_id, column.id, card.title, card.details, card.position),
                         )
         return self.get_board(user_id, board_id)
@@ -387,10 +348,10 @@ class KanbanRepository:
     def delete_board(self, user_id: str, board_id: str) -> None:
         with self._conn() as conn:
             _require_board(conn, user_id, board_id)
-            board_count = conn.execute("SELECT COUNT(*) AS n FROM boards WHERE owner_id = ?", (user_id,)).fetchone()["n"]
+            board_count = conn.execute("SELECT COUNT(*) AS n FROM boards WHERE owner_id = %s", (user_id,)).fetchone()["n"]
             if board_count <= 1:
                 raise CannotDeleteLastBoardError("Cannot delete your only board")
             with _write(conn):
-                conn.execute("DELETE FROM cards WHERE board_id = ?", (board_id,))
-                conn.execute("DELETE FROM columns WHERE board_id = ?", (board_id,))
-                conn.execute("DELETE FROM boards WHERE id = ?", (board_id,))
+                conn.execute("DELETE FROM cards WHERE board_id = %s", (board_id,))
+                conn.execute("DELETE FROM columns WHERE board_id = %s", (board_id,))
+                conn.execute("DELETE FROM boards WHERE id = %s", (board_id,))

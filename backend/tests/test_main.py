@@ -1,7 +1,8 @@
 import asyncio
-import sqlite3
+import os
 
 import httpx
+import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
@@ -11,6 +12,19 @@ from app.repository import KanbanRepository
 
 
 client = TestClient(app)
+
+TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql://kanban:kanban@localhost:5432/kanban")
+_TABLES = ("cards", "columns", "boards", "password_resets", "sessions", "users")
+
+
+@pytest.fixture(autouse=True)
+def repository():
+    repo = KanbanRepository(TEST_DATABASE_URL)
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute(f"TRUNCATE {', '.join(_TABLES)} RESTART IDENTITY CASCADE")
+        conn.commit()
+    main.repository = repo
+    yield repo
 
 
 @pytest.fixture(autouse=True)
@@ -71,8 +85,7 @@ def _valid_board_payload(name: str = "Bad") -> dict:
     }
 
 
-def test_list_boards_returns_seeded_board_after_signup(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_list_boards_returns_seeded_board_after_signup() -> None:
     _signup()
 
     response = client.get("/api/boards")
@@ -83,8 +96,7 @@ def test_list_boards_returns_seeded_board_after_signup(tmp_path, monkeypatch) ->
     assert boards[0]["name"] == "My board"
 
 
-def test_get_board_initializes_seeded_board(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_get_board_initializes_seeded_board() -> None:
     _signup()
     board_id = _first_board_id()
 
@@ -94,11 +106,9 @@ def test_get_board_initializes_seeded_board(tmp_path, monkeypatch) -> None:
     body = response.json()
     assert body["name"] == "My board"
     assert len(body["columns"]) == 5
-    assert (tmp_path / "kanban.db").exists()
 
 
-def test_update_board_persists_column_and_card_changes(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_update_board_persists_column_and_card_changes() -> None:
     _signup()
     board_id = _first_board_id()
     original = client.get(f"/api/boards/{board_id}").json()
@@ -115,8 +125,7 @@ def test_update_board_persists_column_and_card_changes(tmp_path, monkeypatch) ->
     assert read_response.json()["columns"][3]["cards"][0]["id"] == "qa-release"
 
 
-def test_board_api_rejects_invalid_column_count(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_board_api_rejects_invalid_column_count() -> None:
     _signup()
     board_id = _first_board_id()
 
@@ -125,9 +134,7 @@ def test_board_api_rejects_invalid_column_count(tmp_path, monkeypatch) -> None:
     assert invalid_response.status_code == 422
 
 
-def test_board_endpoints_require_authentication(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
-
+def test_board_endpoints_require_authentication() -> None:
     list_response = client.get("/api/boards")
     create_response = client.post("/api/boards", json={"name": "New board"})
     get_response = client.get("/api/boards/some-id")
@@ -143,8 +150,7 @@ def test_board_endpoints_require_authentication(tmp_path, monkeypatch) -> None:
     assert delete_response.status_code == 401
 
 
-def test_create_board_adds_new_board_with_default_columns(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_create_board_adds_new_board_with_default_columns() -> None:
     _signup()
     seeded_id = _first_board_id()
 
@@ -159,8 +165,7 @@ def test_create_board_adds_new_board_with_default_columns(tmp_path, monkeypatch)
     assert listed_ids == {seeded_id, body["id"]}
 
 
-def test_create_board_rejects_invalid_name(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_create_board_rejects_invalid_name() -> None:
     _signup()
 
     response = client.post("/api/boards", json={"name": ""})
@@ -168,8 +173,7 @@ def test_create_board_rejects_invalid_name(tmp_path, monkeypatch) -> None:
     assert response.status_code == 422
 
 
-def test_boards_are_isolated_by_id(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_boards_are_isolated_by_id() -> None:
     _signup()
     first_id = _first_board_id()
     second = client.post("/api/boards", json={"name": "Second board"}).json()
@@ -184,8 +188,7 @@ def test_boards_are_isolated_by_id(tmp_path, monkeypatch) -> None:
     assert all(not column["cards"] for column in first_board["columns"])
 
 
-def test_cannot_access_another_users_board(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_cannot_access_another_users_board() -> None:
     _signup(username="board-owner")
     owner_board_id = _first_board_id()
     client.post("/api/auth/logout")
@@ -200,8 +203,7 @@ def test_cannot_access_another_users_board(tmp_path, monkeypatch) -> None:
     assert delete_response.status_code == 404
 
 
-def test_board_not_found_returns_404(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_board_not_found_returns_404() -> None:
     _signup()
 
     get_response = client.get("/api/boards/does-not-exist")
@@ -213,8 +215,7 @@ def test_board_not_found_returns_404(tmp_path, monkeypatch) -> None:
     assert delete_response.status_code == 404
 
 
-def test_delete_board_removes_it_from_list(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_delete_board_removes_it_from_list() -> None:
     _signup()
     seeded_id = _first_board_id()
     second = client.post("/api/boards", json={"name": "Second board"}).json()
@@ -228,8 +229,7 @@ def test_delete_board_removes_it_from_list(tmp_path, monkeypatch) -> None:
     assert get_after_delete.status_code == 404
 
 
-def test_cannot_delete_last_board(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_cannot_delete_last_board() -> None:
     _signup()
     board_id = _first_board_id()
 
@@ -238,8 +238,7 @@ def test_cannot_delete_last_board(tmp_path, monkeypatch) -> None:
     assert response.status_code == 409
 
 
-def test_rename_board(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_rename_board() -> None:
     _signup()
     board_id = _first_board_id()
 
@@ -250,8 +249,7 @@ def test_rename_board(tmp_path, monkeypatch) -> None:
     assert client.get("/api/boards").json()[0]["name"] == "Renamed board"
 
 
-def test_rename_board_rejects_invalid_name(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_rename_board_rejects_invalid_name() -> None:
     _signup()
     board_id = _first_board_id()
 
@@ -260,8 +258,7 @@ def test_rename_board_rejects_invalid_name(tmp_path, monkeypatch) -> None:
     assert response.status_code == 422
 
 
-def test_cannot_rename_another_users_board(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_cannot_rename_another_users_board() -> None:
     _signup(username="board-owner-2")
     owner_board_id = _first_board_id()
     client.post("/api/auth/logout")
@@ -272,76 +269,18 @@ def test_cannot_rename_another_users_board(tmp_path, monkeypatch) -> None:
     assert response.status_code == 404
 
 
-def test_repository_migrates_legacy_unique_owner_constraint(tmp_path) -> None:
-    database_path = tmp_path / "legacy.db"
-    connection = sqlite3.connect(database_path)
-    connection.executescript(
-        """
-        CREATE TABLE users (
-          id TEXT PRIMARY KEY,
-          username TEXT NOT NULL UNIQUE,
-          password_hash TEXT NOT NULL,
-          board_id TEXT NOT NULL,
-          created_at TEXT NOT NULL
-        );
-        CREATE TABLE boards (
-          id TEXT PRIMARY KEY,
-          owner_id TEXT NOT NULL UNIQUE,
-          name TEXT NOT NULL
-        );
-        CREATE TABLE columns (
-          row_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          id TEXT NOT NULL,
-          board_id TEXT NOT NULL,
-          name TEXT NOT NULL,
-          accent TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          UNIQUE(board_id, id)
-        );
-        CREATE TABLE cards (
-          row_id INTEGER PRIMARY KEY AUTOINCREMENT,
-          id TEXT NOT NULL,
-          board_id TEXT NOT NULL,
-          column_id TEXT NOT NULL,
-          title TEXT NOT NULL,
-          details TEXT NOT NULL,
-          position INTEGER NOT NULL,
-          UNIQUE(board_id, id)
-        );
-        """
-    )
-    connection.execute(
-        "INSERT INTO users (id, username, password_hash, board_id, created_at) VALUES (?, ?, ?, ?, ?)",
-        ("legacy-user", "legacy", "hash", "legacy-board", "2024-01-01T00:00:00+00:00"),
-    )
-    connection.execute(
-        "INSERT INTO boards (id, owner_id, name) VALUES (?, ?, ?)", ("legacy-board", "legacy-user", "My board")
-    )
-    connection.commit()
-    connection.close()
-
-    repository = KanbanRepository(database_path)
-
-    second_board = repository.create_board("legacy-user", "Second board")
-    boards = repository.list_boards("legacy-user")
-
-    assert second_board.id != "legacy-board"
-    assert {board.id for board in boards} == {"legacy-board", second_board.id}
-
-
-def test_corrupt_database_returns_server_error(tmp_path, monkeypatch) -> None:
-    database = tmp_path / "kanban.db"
-    monkeypatch.setattr(main, "repository", KanbanRepository(database))
-    database.write_bytes(b"not a sqlite database")
+def test_database_error_returns_server_error() -> None:
+    with psycopg.connect(TEST_DATABASE_URL) as conn:
+        conn.execute("DROP TABLE users CASCADE")
+        conn.commit()
 
     response = client.post("/api/auth/signup", json={"username": "bob", "password": "correct-horse-battery"})
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "Kanban database is unreadable"}
+    assert response.json() == {"detail": "Kanban database is not writable"}
 
 
-def test_signup_rejects_duplicate_username(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_signup_rejects_duplicate_username() -> None:
     _signup(username="carol")
 
     response = client.post("/api/auth/signup", json={"username": "carol", "password": "another-password"})
@@ -349,8 +288,7 @@ def test_signup_rejects_duplicate_username(tmp_path, monkeypatch) -> None:
     assert response.status_code == 409
 
 
-def test_login_succeeds_with_correct_password_and_fails_with_wrong_one(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_login_succeeds_with_correct_password_and_fails_with_wrong_one() -> None:
     _signup(username="dave", password="right-password")
     client.post("/api/auth/logout")
 
@@ -363,16 +301,14 @@ def test_login_succeeds_with_correct_password_and_fails_with_wrong_one(tmp_path,
     assert bad_response.status_code == 401
 
 
-def test_me_requires_authentication(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_me_requires_authentication() -> None:
 
     response = client.get("/api/auth/me")
 
     assert response.status_code == 401
 
 
-def test_logout_invalidates_session(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_logout_invalidates_session() -> None:
     _signup(username="erin")
 
     logout_response = client.post("/api/auth/logout")
@@ -382,8 +318,7 @@ def test_logout_invalidates_session(tmp_path, monkeypatch) -> None:
     assert me_response.status_code == 401
 
 
-def test_forgot_password_for_unknown_user_returns_200_without_token(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_forgot_password_for_unknown_user_returns_200_without_token() -> None:
 
     response = client.post("/api/auth/forgot-password", json={"username": "nobody"})
 
@@ -391,8 +326,7 @@ def test_forgot_password_for_unknown_user_returns_200_without_token(tmp_path, mo
     assert response.json()["reset_token"] is None
 
 
-def test_forgot_password_reset_then_login_flow(tmp_path, monkeypatch) -> None:
-    monkeypatch.setattr(main, "repository", KanbanRepository(tmp_path / "kanban.db"))
+def test_forgot_password_reset_then_login_flow() -> None:
     _signup(username="frank", password="old-password")
     client.post("/api/auth/logout")
 
