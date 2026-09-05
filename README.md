@@ -52,10 +52,11 @@ That single prompt touched two different parts of the board (a new card *and* a 
 | Layer | Choices |
 |---|---|
 | Frontend | Next.js 16 (App Router, Turbopack), React 19, TypeScript, Tailwind CSS v4, `@dnd-kit` for drag-and-drop |
-| Backend | FastAPI, Postgres (Neon in production, Docker Compose locally), bcrypt, [uv](https://docs.astral.sh/uv/) for dependency management |
+| Backend | FastAPI, bcrypt, [uv](https://docs.astral.sh/uv/) for dependency management |
+| Database | Postgres 16 - Neon (managed, serverless) in production, the `postgres` Docker Compose service locally |
 | AI | Groq (`openai/gpt-oss-20b`), server-side only, structured-response validation |
 | Testing | pytest, Vitest + Testing Library, Playwright (e2e, multi-viewport) |
-| Infra | Docker Compose for the backend |
+| Infra | Docker Compose for local dev, Render (backend hosting) + Neon (database) in production |
 
 ## Quick Start
 
