@@ -76,12 +76,12 @@ Sign up with any username/password to get a seeded board, then add cards, drag t
 
 ## Testing
 
-75 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
+113 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
 
 | Layer | Tool | Tests | Covers |
 |---|---|---|---|
-| Unit / integration | pytest (against a real Postgres instance) | 40 | auth, sessions, board CRUD and ownership, the AI proxy contract, rate limiting |
-| Component | Vitest + Testing Library | 25 | sign-in/sign-up flows, board interactions, optimistic save/rollback, multi-board switching |
+| Unit / integration | pytest (against a real Postgres instance) | 66 | auth, sessions, board CRUD and ownership, the AI proxy contract, rate limiting, chat-history logging, boundary/edge-case validation |
+| Component | Vitest + Testing Library | 37 | sign-in/sign-up flows, board interactions, optimistic save/rollback, multi-board switching, whitespace-input guards |
 | End-to-end | Playwright (desktop + mobile viewports) | 10 | full user journeys in a real browser against a real backend |
 
 ### Testing an AI feature without flaky, expensive, non-deterministic tests
