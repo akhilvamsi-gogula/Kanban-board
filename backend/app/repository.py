@@ -69,6 +69,15 @@ CREATE TABLE IF NOT EXISTS password_resets (
   expires_at TEXT NOT NULL,
   used BOOLEAN NOT NULL DEFAULT FALSE
 );
+CREATE TABLE IF NOT EXISTS ai_chat_messages (
+  row_id BIGSERIAL PRIMARY KEY,
+  user_id TEXT,
+  board_id TEXT,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ai_chat_messages_user_id ON ai_chat_messages (user_id);
 """
 
 
@@ -355,3 +364,12 @@ class KanbanRepository:
                 conn.execute("DELETE FROM cards WHERE board_id = %s", (board_id,))
                 conn.execute("DELETE FROM columns WHERE board_id = %s", (board_id,))
                 conn.execute("DELETE FROM boards WHERE id = %s", (board_id,))
+
+    # -- AI chat log --------------------------------------------------------
+
+    def log_ai_chat_message(self, user_id: str | None, board_id: str | None, role: str, content: str) -> None:
+        with self._conn() as conn, _write(conn):
+            conn.execute(
+                "INSERT INTO ai_chat_messages (user_id, board_id, role, content, created_at) VALUES (%s, %s, %s, %s, %s)",
+                (user_id, board_id, role, content, _isoformat(_now())),
+            )

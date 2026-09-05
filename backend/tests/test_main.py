@@ -14,7 +14,7 @@ from app.repository import KanbanRepository
 client = TestClient(app)
 
 TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL", "postgresql://kanban:kanban@localhost:5432/kanban")
-_TABLES = ("cards", "columns", "boards", "password_resets", "sessions", "users")
+_TABLES = ("cards", "columns", "boards", "password_resets", "sessions", "users", "ai_chat_messages")
 
 
 @pytest.fixture(autouse=True)
@@ -425,6 +425,77 @@ def test_ai_chat_succeeds_with_valid_provider_response(monkeypatch) -> None:
     body = response.json()
     assert body["assistant_message"] == "I can rename the backlog."
     assert body["board_update"]["columns"][0]["name"] == "Ideas"
+
+
+def test_ai_chat_logs_prompt_and_reply_scoped_to_the_requesting_user(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"assistant_message":"There are no cards yet."}'}}]}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.post(
+        "/api/ai/chat",
+        json={
+            "prompt": "How many cards are there?",
+            "board": {
+                "id": "board-1",
+                "owner_id": "user-1",
+                "name": "Q3 product launch",
+                "columns": [
+                    {"id": "backlog", "name": "Backlog", "accent": "#8b95a5", "position": 0, "cards": []},
+                    {"id": "up-next", "name": "Up next", "accent": "#ecad0a", "position": 1, "cards": []},
+                    {"id": "in-progress", "name": "In progress", "accent": "#209dd7", "position": 2, "cards": []},
+                    {"id": "review", "name": "Review", "accent": "#753991", "position": 3, "cards": []},
+                    {"id": "done", "name": "Done", "accent": "#2f9d70", "position": 4, "cards": []},
+                ],
+            },
+        },
+    )
+
+    assert response.status_code == 200
+
+    with psycopg.connect(TEST_DATABASE_URL, row_factory=psycopg.rows.dict_row) as conn:
+        rows = conn.execute(
+            "SELECT user_id, board_id, role, content FROM ai_chat_messages ORDER BY row_id"
+        ).fetchall()
+
+    assert [dict(row) for row in rows] == [
+        {"user_id": "user-1", "board_id": "board-1", "role": "user", "content": "How many cards are there?"},
+        {"user_id": "user-1", "board_id": "board-1", "role": "assistant", "content": "There are no cards yet."},
+    ]
+
+
+def test_ai_chat_logs_null_ids_when_called_without_a_board(monkeypatch) -> None:
+    monkeypatch.setenv("GROQ_API_KEY", "test-key")
+
+    class FakeResponse:
+        status_code = 200
+
+        def json(self):
+            return {"choices": [{"message": {"content": '{"assistant_message":"Hello there."}'}}]}
+
+    async def fake_post(self, *args, **kwargs) -> FakeResponse:
+        return FakeResponse()
+
+    monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)
+
+    response = client.post("/api/ai/chat", json={"prompt": "Just saying hi, no board attached."})
+
+    assert response.status_code == 200
+    with psycopg.connect(TEST_DATABASE_URL, row_factory=psycopg.rows.dict_row) as conn:
+        rows = conn.execute("SELECT user_id, board_id, role FROM ai_chat_messages ORDER BY row_id").fetchall()
+    assert [dict(row) for row in rows] == [
+        {"user_id": None, "board_id": None, "role": "user"},
+        {"user_id": None, "board_id": None, "role": "assistant"},
+    ]
 
 
 def test_ai_chat_retries_once_on_malformed_response_then_succeeds(monkeypatch) -> None:
