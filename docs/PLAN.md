@@ -390,6 +390,34 @@ This phase follows the deployed app from Part 12 (live on Vercel + Render, per t
 - No migration of pre-existing local/deployed SQLite data - both were already effectively lost/ephemeral test data, so the new Postgres schema starts empty rather than writing a one-off import script for throwaway rows.
 - Timestamps stay `TEXT` (ISO strings) in Postgres rather than becoming native `TIMESTAMPTZ` columns - not idiomatic Postgres, but it avoids touching the existing `_isoformat`/`_parse` helpers for no behavioral gain, since comparisons already happen in Python.
 
+## Part 14: Cross-Account State Leak Fix, AI Chat Logging, and Boundary Test Hardening
+
+This phase follows the deployed Postgres migration from Part 13. It started from a real bug found by hand: after signing up a fresh account (`akhiltesting`) in the same browser tab used moments earlier for a different account (`testuser`), the AI assistant panel showed `testuser`'s prior conversation ("Add random cards for testing" / "Added five random test cards...") even though `akhiltesting` had never sent a message and had a genuinely empty (correctly seeded) board.
+
+### Checklist
+
+- [x] Diagnose the stale-chat-history bug: `<Board>` in `frontend/app/page.tsx` was rendered without a `key` prop and is never otherwise unmounted, so React reused the same component instance across login/logout/signup. `assistantMessages` (and other client-only UI state - `isAssistantOpen`, `cardDialog`, `assistantDraft`) lived in local `useState` and survived across accounts in the same tab, even though the actual board data (`columns`, a controlled prop refetched per account) was always correct.
+- [x] Fix by keying `<Board>` on the signed-in username - `key={username ?? "signed-out"}` - so React fully remounts it, resetting all internal state, on every login, logout, and signup.
+- [x] Confirm chat history was never persisted anywhere (no `localStorage`, no backend table at the time) - the leak was purely an in-memory React state lifetime bug, not a data-layer one.
+- [x] Add a `ai_chat_messages` table (`user_id`, `board_id`, `role`, `content`, `created_at`) and log every `/api/ai/chat` prompt and reply to it, at the user's explicit request for hands-on learning/analysis (querying different users' AI usage directly in Neon). Attribution uses the client-supplied `board.owner_id`/`board.id` from the request, not a verified session, since `/api/ai/chat` remains intentionally unauthenticated (rate-limited only) per its existing design - this is analysis data, not a tamper-proof audit log.
+- [x] Deliberately did not add a `GET` history endpoint or any frontend UI for the new table - out of scope for what was asked, per the project's "no speculative features" convention; querying Neon directly is sufficient for the stated use case.
+- [x] Expand backend and frontend test coverage with boundary/edge cases well beyond the two items above: signup/login field-length and character-pattern boundaries, bcrypt's documented 72-byte truncation behavior, the full password-reset token lifecycle (invalid/reused/expired tokens, session invalidation on reset), session expiry, the auth rate limiter's boundary, board/column/card structural validation (duplicate column/card ids, non-contiguous card positions, invalid card-id pattern, title/name length boundaries), AI chat prompt-length and history-trimming boundaries, and frontend dialog whitespace-only-input guards (card title, column rename, board name).
+- [x] Ran the fixed staleness-audit checklist from Cross-Phase Completion Checks: `git log --all --not origin/main` surfaced one commit (`e514f69`, on the abandoned branch `origin/claude/seeded-board-new-account-tm9bd8`) fixing the same stale footer copy already fixed on `main` via a separate commit (`50e7473`) - a duplicate, not a gap. No stale copy found grepping the frontend for superseded-behavior language, and no drift found grepping `README.md`/`backend/README.md`/`frontend/README.md`/`CLAUDE.md` for stale test counts or removed env var names.
+
+### Tests and success criteria
+
+- [x] A regression test (`home.test.tsx`) signs in as one account, has the AI assistant respond, logs out, signs in as a different account, and asserts the assistant panel shows only the default placeholder message with no leftover history from the first account.
+- [x] A backend test confirms `/api/ai/chat` logs both the prompt and the reply to `ai_chat_messages`, correctly scoped to the `user_id`/`board_id` from the request, and a second test confirms `NULL` ids are stored (without erroring) when no board is attached to the request.
+- [x] Backend suite passes: 64 tests (up from 41 at the end of Part 13), covering the logging feature plus all the boundary/edge cases listed above; `test_main.py`'s table-truncation fixture extended to include `ai_chat_messages`.
+- [x] Frontend suite passes: 37 tests (up from 26), including the cross-account regression test above, new whitespace-input-guard tests in `board.test.tsx`, new server-error/in-flight-disable/invalid-token tests in `sign-in.test.tsx`, and a new `board-switcher.test.tsx` covering the delete-button-hidden-for-one-board rule, delete confirmation, and whitespace-only board names.
+- [x] Lint, `tsc --noEmit`, and `next build` all pass.
+- [ ] Playwright e2e not re-run this phase - the existing suite covers golden-path flows only (not boundary cases) and needs browser binaries plus a live backend/DB; left as an optional follow-up rather than run speculatively.
+
+### Part 14 decisions
+
+- No new API endpoint or frontend UI for `ai_chat_messages` - direct Postgres/Neon SQL queries are sufficient for the stated learning/analysis use case, and adding either would be scope beyond what was asked.
+- No persistence added for the AI assistant's chat history itself (e.g. `localStorage`) - the bug was React state outliving the account it belonged to, not the absence of durability; a `key`-based remount fixes that at zero backend cost and matches the project's "reset on refresh/logout" model for other client-only UI state.
+
 ## Part 15: CI Pipeline, Session Cookie Hardening, and an AI Behavior Eval Harness
 
 This phase follows a QA-perspective review of the whole application (backend, frontend, security, performance, AI-specific testing) done in Part 14's spirit but broader in scope. It picks the three highest-leverage findings from that review and closes them.

@@ -239,6 +239,10 @@ async def ai_chat(payload: AiChatRequest) -> AiChatResponse:
     model = os.getenv("GROQ_MODEL", "openai/gpt-oss-20b")
     timeout_ms = int(os.getenv("GROQ_TIMEOUT_MS", "15000"))
 
+    chat_user_id = getattr(payload.board, "owner_id", None)
+    chat_board_id = getattr(payload.board, "id", None)
+    repository.log_ai_chat_message(chat_user_id, chat_board_id, "user", payload.prompt)
+
     board_payload = payload.board.model_dump(mode="json") if payload.board else None
     history_payload = [message.model_dump(mode="json") for message in payload.history[-8:]]
 
@@ -335,6 +339,7 @@ async def ai_chat(payload: AiChatRequest) -> AiChatResponse:
                                 card_title = card.get("title")
                                 if not isinstance(card_title, str) or not card_title.strip():
                                     raise ValueError("card updates require a non-empty title")
+            repository.log_ai_chat_message(chat_user_id, chat_board_id, "assistant", assistant_message)
             return AiChatResponse(assistant_message=assistant_message, board_update=board_update)
         except (KeyError, TypeError, ValueError, ValidationError):
             if is_last_attempt:

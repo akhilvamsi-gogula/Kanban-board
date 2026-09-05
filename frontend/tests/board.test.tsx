@@ -66,6 +66,37 @@ describe("Board", () => {
     expect(reordered.map((card) => card.id)).toEqual(["review-analytics", "map-user-journey"]);
   });
 
+  it("reorderCards returns the cards unchanged when either id cannot be found", () => {
+    const cards = initialColumns[0].cards;
+
+    expect(reorderCards(cards, "does-not-exist", cards[0].id)).toBe(cards);
+    expect(reorderCards(cards, cards[0].id, "does-not-exist")).toBe(cards);
+  });
+
+  it("does not add a card when the title is only whitespace", async () => {
+    const user = userEvent.setup();
+    render(<Board isVisible onLogout={() => undefined} />);
+    await user.click(document.querySelector(".toolbar-add") as HTMLButtonElement);
+    await user.type(screen.getByLabelText("Title"), "   ");
+    await user.click(document.querySelector(".dialog-form .button-primary") as HTMLButtonElement);
+
+    expect(screen.getByRole("heading", { name: "Add a card" })).toBeInTheDocument();
+  });
+
+  it("does not rename a column to a whitespace-only name", async () => {
+    const user = userEvent.setup();
+    render(<Board isVisible onLogout={() => undefined} />);
+    await user.click(screen.getByRole("button", { name: "Rename Backlog" }));
+    const columnInput = screen.getByLabelText("Column name");
+    await user.clear(columnInput);
+    await user.type(columnInput, "   ");
+    await user.click(screen.getByRole("button", { name: "Rename column" }));
+
+    expect(screen.getByRole("heading", { name: "Rename column" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.getByRole("heading", { name: "Backlog" })).toBeInTheDocument();
+  });
+
   describe("AI undo", () => {
     afterEach(() => {
       vi.unstubAllGlobals();

@@ -171,6 +171,7 @@ export default function Home() {
   return (
     <>
       <Board
+        key={username ?? "signed-out"}
         isVisible={isSignedIn && columns !== null && !loadError}
         boardName={boardName}
         boardId={activeBoardId ?? undefined}
