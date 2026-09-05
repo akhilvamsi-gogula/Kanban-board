@@ -41,7 +41,7 @@ Ask it to read the board or change it - the same request handles both, since the
 
 > **You:** Add a card called "Prep sprint demo" with details "Walk through the new AI co-pilot flow" to Up next, and rename Review to QA.
 >
-> **Assistant:** Added 'Prep sprint demo' card to 'Up next' and renamed 'Review' to 'QA'.
+> **Assistant:** Added a new task to Up next and renamed Review to QA.
 
 ![AI co-pilot editing a board in real time](docs/kanban-ai-copilot-screenshot.png)
 
