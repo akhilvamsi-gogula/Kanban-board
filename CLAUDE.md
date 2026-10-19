@@ -78,6 +78,10 @@ Note: this project previously used OpenRouter as the AI provider (see git histor
 
 **AI co-pilot:** `Board` sends the full current board (in API shape) plus a trimmed history (last 8 messages) to `askBoardAssistant`; a returned `board_update` is applied the same way as any local edit (through `onColumnsChange`), so it flows through the same optimistic-save path in `page.tsx`. Before applying a `board_update`, `Board` snapshots the pre-update columns/name in state; a prompt matching `/\bundo\b/i` reverts to that snapshot locally (no Groq request) instead of being sent to the assistant, since the assistant is never shown prior board states and can't reconstruct one itself. On the backend, `ai_chat` retries once (`max_attempts = 2`) if Groq's response is malformed JSON, or if `assistant_message` claims a change (matches `CLAIMED_CHANGE_PATTERN`) but omits `board_update` - small models occasionally do either.
 
+## Git
+
+- Never commit or push without the user's explicit approval in the current conversation. Show the diff and test results, then ask first.
+
 ## Conventions (from AGENTS.md)
 
 - Keep it simple - no over-engineering, no defensive programming for cases that can't happen, no speculative features. This is a deliberately minimal MVP (fixed 5 columns per board, cards have only title+details, no search/archive/filter).
