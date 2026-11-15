@@ -8,7 +8,7 @@ How the app is tested, on which devices, what the edge and boundary cases are, a
 |---|---|---|---|
 | Backend unit and integration | pytest against a real Postgres | 105 tests | yes |
 | Frontend unit and component | Vitest + Testing Library (jsdom) | 70 tests in 6 files | yes |
-| End-to-end | Playwright, real browsers against a real backend and database | 9 scenarios x 4 device profiles = 36 runs (32 run, 4 skipped by design) | no |
+| End-to-end | Playwright, real browsers against a real backend and database | 13 scenarios x 4 device profiles = 52 runs (48 run, 4 skipped by design) | no |
 | Load (concurrent users) | `backend/scripts/load_check.py` | 5 and 25 simultaneous users | no |
 | AI behavior | `backend/eval/ai_eval.py` against the real Groq model | 6 cases | no |
 | Real device | manual, Galaxy S24 Ultra | checklist below | no |
@@ -41,9 +41,10 @@ Notes for testers:
 4. Rename a board, and re-select the active board without getting stuck loading.
 5. The board stays usable on a narrow (700 px) viewport.
 6. On a phone screen, a column chip brings the Done column into view, and the AI text box and Send button are on screen.
-7. Maximum-length text (200-character title, 80-character column name, 120-character board name, a long URL) stays inside its box on a phone screen and survives a reload.
-8. The column chips are hidden on a desktop screen.
-9. The board requires sign-in, and logging out returns to sign-in.
+7. At 901, 980, 1024 and 1200 px wide (a tablet, a narrow window, a phone browser in "Desktop site" mode), a column chip brings the Done column into view. Five columns need about 1270 px; below that the board scrolls sideways and the chips appear. These count as four scenarios.
+8. Maximum-length text (200-character title, 80-character column name, 120-character board name, a long URL) stays inside its box on a phone screen and survives a reload.
+9. The column chips are hidden on a desktop screen (1280 px and wider).
+10. The board requires sign-in, and logging out returns to sign-in.
 
 ### Real-device checklist (Galaxy S24 Ultra)
 
@@ -56,6 +57,7 @@ Confirmed on the real phone: drag and drop by the six-dot grip, the Done column 
 5. Open the AI co-pilot. The text box and Send are visible without scrolling, with the on-screen keyboard open and closed.
 6. Add a card with a very long word in the title. It wraps inside the card.
 7. Rotate the phone to landscape and repeat steps 2 and 5.
+8. Turn on the browser's "Desktop site" option. The chips still show and Done is reachable.
 
 ## Edge and boundary cases
 
@@ -90,7 +92,8 @@ Other cases with tests:
 - **Switching boards mid-save.** A slow save for the previous board does not overwrite the board now on screen.
 - **AI replies.** Malformed JSON, a claimed change with no `board_update`, a wrong field name, a partial update, an update that names an unknown column, a Groq timeout and a Groq 429 each have a test. All AI tests mock the Groq HTTP call, so they are fast, free and deterministic.
 - **Cold start.** The wake-up screen stays hidden for a fast backend, appears after 2 seconds for a slow one, and shows an error with Try again after 90 seconds.
-- **Long text on a phone.** See end-to-end scenario 7.
+- **Long text on a phone.** See end-to-end scenario 8.
+- **In-between widths.** See end-to-end scenario 7.
 
 Known and accepted behavior:
 

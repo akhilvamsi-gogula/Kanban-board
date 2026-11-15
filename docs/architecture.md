@@ -124,7 +124,7 @@ A 401 from any request outside `/auth/*` means the session ended (expired, or a 
 - `components/board.tsx` holds UI state (dialogs, drag overlay) and the dnd-kit context. Every mutation is a pure function in `lib/board-ops.ts` (`moveCard`, `addCard`, `updateCard`, `deleteCard`, `renameColumn`).
 - New card ids are `card-${crypto.randomUUID()}`.
 - Drag uses separate `MouseSensor` and `TouchSensor` (150 ms press-and-hold) plus a keyboard sensor. The drag handle has `touch-action: none`; without it the browser treats the touch as a scroll and cancels the drag. dnd-kit's sortable `attributes` sit on the handle, not the card, so the card's buttons are not nested inside another interactive element.
-- Up to 900 px wide the board scrolls sideways with scroll snapping (off during a drag, so it does not fight the drag auto-scroll), and `components/column-nav.tsx` shows a chip per column that jumps to it.
+- Below 1280 px wide (five columns need about 1270 px) the board scrolls sideways with scroll snapping (off during a drag, so it does not fight the drag auto-scroll), and `components/column-nav.tsx` shows a chip per column that jumps to it.
 - Dialogs (`board-dialogs.tsx`) close on Escape and return focus to the element that opened them. Their inputs carry the same `maxLength` as the backend limits.
 - `components/board-switcher.tsx` lists, creates, renames and deletes boards. Delete is hidden when one board remains.
 
