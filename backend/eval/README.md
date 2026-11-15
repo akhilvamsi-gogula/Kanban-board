@@ -6,7 +6,7 @@
 
 ## Running it
 
-Start the backend locally with `GROQ_API_KEY` configured (see the root `CLAUDE.md`), then from `backend/`:
+Start the backend locally with `GROQ_API_KEY` configured (see [docs/deployment.md](../../docs/deployment.md)), then from `backend/`:
 
 ```bash
 uv run python eval/ai_eval.py

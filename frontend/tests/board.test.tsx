@@ -83,6 +83,22 @@ describe("Board", () => {
     expect(screen.getByRole("heading", { name: "Add a card" })).toBeInTheDocument();
   });
 
+  it("stops typing at the same limits the backend enforces", async () => {
+    // Without these a 201-character title was accepted on screen, then rejected by every save.
+    const user = userEvent.setup();
+    render(<Board isVisible onLogout={() => undefined} />);
+    await user.click(document.querySelector(".toolbar-add") as HTMLButtonElement);
+    const title = screen.getByLabelText("Title");
+    await user.click(title);
+    await user.paste("t".repeat(250));
+
+    expect(title).toHaveValue("t".repeat(200));
+    expect(screen.getByLabelText("Details")).toHaveAttribute("maxlength", "5000");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Rename Backlog" }));
+    expect(screen.getByLabelText("Column name")).toHaveAttribute("maxlength", "80");
+  });
+
   it("does not rename a column to a whitespace-only name", async () => {
     const user = userEvent.setup();
     render(<Board isVisible onLogout={() => undefined} />);

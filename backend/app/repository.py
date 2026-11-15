@@ -377,8 +377,10 @@ class KanbanRepository:
     def delete_board(self, user_id: str, board_id: str) -> None:
         with self._conn() as conn:
             _require_board(conn, user_id, board_id)
-            board_count = conn.execute("SELECT COUNT(*) AS n FROM boards WHERE owner_id = %s", (user_id,)).fetchone()["n"]
-            if board_count <= 1:
+            # Lock the account's board rows, so two deletes running at once can't each see
+            # "two boards left" and together remove the last one.
+            owned = conn.execute("SELECT id FROM boards WHERE owner_id = %s FOR UPDATE", (user_id,)).fetchall()
+            if len(owned) <= 1:
                 raise CannotDeleteLastBoardError("Cannot delete your only board")
             with _write(conn):
                 conn.execute("DELETE FROM cards WHERE board_id = %s", (board_id,))
@@ -391,5 +393,6 @@ class KanbanRepository:
         with self._conn() as conn, _write(conn):
             conn.execute(
                 "INSERT INTO ai_chat_messages (user_id, board_id, role, content, created_at) VALUES (%s, %s, %s, %s, %s)",
-                (user_id, board_id, role, content, _isoformat(_now())),
+                # Postgres text can't hold a null character; a model reply may contain one.
+                (user_id, board_id, role, content.replace("\x00", ""), _isoformat(_now())),
             )

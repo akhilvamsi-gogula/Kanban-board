@@ -106,6 +106,7 @@ export function AiAssistant({ isOpen, onClose, boardId, ownerId, boardName, colu
             value={draft}
             onChange={(event) => setDraft(event.target.value)}
             rows={4}
+            maxLength={2000}
             placeholder="Ask the board assistant to rename a column, add a task, or reorder cards"
             aria-label="Ask the board assistant"
             disabled={isLoading}

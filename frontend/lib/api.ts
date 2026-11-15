@@ -19,6 +19,14 @@ async function parseErrorDetail(response: Response): Promise<string> {
   return detail ?? `Request failed (${response.status})`;
 }
 
+// Called when a request that needs a session gets a 401: the session expired, or a password
+// reset on another device signed this one out. page.tsx uses it to return to sign-in.
+let sessionExpiredListener: (() => void) | null = null;
+
+export function onSessionExpired(listener: (() => void) | null): void {
+  sessionExpiredListener = listener;
+}
+
 async function request<T>(path: string, options?: RequestInit & { parseJson?: boolean }): Promise<T> {
   const { parseJson = true, ...init } = options ?? {};
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -26,6 +34,8 @@ async function request<T>(path: string, options?: RequestInit & { parseJson?: bo
     credentials: "include",
     headers: { "Content-Type": "application/json", ...init.headers },
   });
+  // A 401 from /auth/* is a wrong password or token, not a lost session.
+  if (response.status === 401 && !path.startsWith("/auth/")) sessionExpiredListener?.();
   if (!response.ok) throw new Error(await parseErrorDetail(response));
   if (!parseJson) return undefined as T;
   return response.json() as Promise<T>;

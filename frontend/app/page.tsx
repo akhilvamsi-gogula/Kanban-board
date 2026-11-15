@@ -2,7 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { createBoard, deleteBoard, fetchBoard, getCurrentUser, listBoards, renameBoard, saveBoard, signOut, toColumns, waitForBackend } from "../lib/api";
+import { createBoard, deleteBoard, fetchBoard, getCurrentUser, listBoards, onSessionExpired, renameBoard, saveBoard, signOut, toColumns, waitForBackend } from "../lib/api";
 import type { BoardSummary, Column } from "../lib/types";
 import { WakeUpScreen } from "../components/wake-up-screen";
 
@@ -25,6 +25,7 @@ export default function Home() {
   const [saveError, setSaveError] = useState<{ boardId: string; next: Column[]; previous: Column[] } | null>(null);
   const [boardActionError, setBoardActionError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [signInNotice, setSignInNotice] = useState<string | null>(null);
   // flushSaves needs the board that is active when its PUT *resolves*, not the one
   // captured in the closure when it started, to detect a save it should discard.
   const activeBoardIdRef = useRef(activeBoardId);
@@ -48,6 +49,22 @@ export default function Home() {
     window.addEventListener("beforeunload", warn);
     return () => window.removeEventListener("beforeunload", warn);
   }, [isSaving]);
+
+  // A 401 while signed in (session expired, or ended by a password reset elsewhere) returns to
+  // sign-in with an explanation, instead of leaving a board whose saves can never succeed.
+  useEffect(() => {
+    onSessionExpired(() => {
+      setIsSignedIn(false);
+      setUsername(undefined);
+      setBoards(null);
+      setActiveBoardId(null);
+      setOwnerId(undefined);
+      setColumns(null);
+      setSaveError(null);
+      setSignInNotice("Your session has ended. Sign in again to continue.");
+    });
+    return () => onSessionExpired(null);
+  }, []);
 
   // Wait for the backend (it may be waking from Render's free-tier sleep), then resolve the
   // session. The wake-up screen only appears if that takes longer than WAKE_SCREEN_DELAY_MS,
@@ -208,6 +225,7 @@ export default function Home() {
   function handleAuthenticated(user: { username: string }) {
     clearBoardState();
     setLoadError(null);
+    setSignInNotice(null);
     setUsername(user.username);
     setIsSignedIn(true);
   }
@@ -257,7 +275,7 @@ export default function Home() {
       {isSignedIn && saveError && saveError.boardId === activeBoardId && <div className="save-error" role="alert"><span>Could not save your latest change.</span><button type="button" className="button button-quiet button-small" onClick={retrySave} disabled={isSaving}>Retry</button></div>}
       {isSignedIn && boardActionError && <div className="save-error" role="alert"><span>{boardActionError}</span><button type="button" className="button button-quiet button-small" onClick={() => setBoardActionError(null)}>Dismiss</button></div>}
       {isSignedIn && isSaving && <div className="save-status" role="status">Saving...</div>}
-      {!isSignedIn && <SignIn onSignIn={handleAuthenticated} />}
+      {!isSignedIn && <SignIn onSignIn={handleAuthenticated} notice={signInNotice} />}
     </>
   );
 }

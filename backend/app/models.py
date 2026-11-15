@@ -1,47 +1,46 @@
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
+
+
+def _clean_text(value: object) -> object:
+    """Trim before the length checks run, so a whitespace-only value is rejected as empty
+    instead of being stored as "" (which the same model would then refuse to read back).
+    Postgres text columns can't hold a null character, so that is rejected here too."""
+    if not isinstance(value, str):
+        return value
+    if "\x00" in value:
+        raise ValueError("text cannot contain null characters")
+    return value.strip()
+
+
+Text = Annotated[str, BeforeValidator(_clean_text)]
 
 
 class CardModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9-]{0,63}$")
-    title: str = Field(min_length=1, max_length=200)
-    details: str = Field(default="", max_length=5000)
+    title: Text = Field(min_length=1, max_length=200)
+    details: Text = Field(default="", max_length=5000)
     position: int = Field(ge=0)
-
-    @field_validator("title", "details")
-    @classmethod
-    def trim_text(cls, value: str) -> str:
-        return value.strip()
 
 
 class ColumnModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str = Field(min_length=1, max_length=64, pattern=r"^[a-z][a-z0-9-]{0,63}$")
-    name: str = Field(min_length=1, max_length=80)
+    name: Text = Field(min_length=1, max_length=80)
     accent: str = Field(pattern=r"^#[0-9a-fA-F]{6}$")
     position: int = Field(ge=0)
     cards: list[CardModel] = Field(default_factory=list)
-
-    @field_validator("name")
-    @classmethod
-    def trim_name(cls, value: str) -> str:
-        return value.strip()
 
 
 class BoardUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=120)
+    name: Text = Field(min_length=1, max_length=120)
     columns: list[ColumnModel] = Field(min_length=5, max_length=5)
-
-    @field_validator("name")
-    @classmethod
-    def trim_board_name(cls, value: str) -> str:
-        return value.strip()
 
     @model_validator(mode="after")
     def validate_structure(self) -> "BoardUpdate":
@@ -76,12 +75,7 @@ class BoardSummary(BaseModel):
 class CreateBoardRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    name: str = Field(min_length=1, max_length=120)
-
-    @field_validator("name")
-    @classmethod
-    def trim_board_name(cls, value: str) -> str:
-        return value.strip()
+    name: Text = Field(min_length=1, max_length=120)
 
 
 class SignupRequest(BaseModel):
@@ -131,27 +125,17 @@ class ChatMessage(BaseModel):
     # Only conversational roles: history is forwarded to the model verbatim, so a "system"
     # entry would let a client inject instructions.
     role: Literal["user", "assistant"]
-    content: str = Field(min_length=1, max_length=10000)
+    content: Text = Field(min_length=1, max_length=10000)
 
 
 class AiChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    prompt: str = Field(min_length=1, max_length=2000)
+    prompt: Text = Field(min_length=1, max_length=2000)
     # The board currently on screen (it may include edits whose save is still in flight).
     # Its id must belong to the signed-in user; its owner_id is ignored.
     board: BoardResponse
     history: list[ChatMessage] = Field(default_factory=list, max_length=50)
-
-    @field_validator("prompt", mode="before")
-    @classmethod
-    def trim_prompt(cls, value: str) -> str:
-        if not isinstance(value, str):
-            return value
-        trimmed = value.strip()
-        if not trimmed:
-            raise ValueError("prompt cannot be empty")
-        return trimmed
 
 
 class AiChatResponse(BaseModel):

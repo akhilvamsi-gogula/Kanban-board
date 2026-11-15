@@ -11,7 +11,7 @@
 - Rename columns through the column action
 - No more functionality: no archive, no search/filter. Keep it simple.
 - The priority is a slick, professional, gorgeous UI/UX with very simple features
-- The app should open with dummy data populated for the single board
+- A new account starts with one empty board ("My board") with the five default columns
 
 ## Technical Details
 
@@ -74,4 +74,4 @@ Playwright requires browser binaries and compatible system libraries. If browser
 
 1. Use latest versions of libraries and idiomatic approaches as of today
 2. Keep it simple - NEVER over-engineer, ALWAYS simplify, NO unnecessary defensive programming. No extra features - focus on simplicity.
-3. Be concise. Keep README minimal. IMPORTANT: no emojis ever
+3. Be concise. The README explains the app and its testing; reference detail goes in `docs/`. IMPORTANT: no emojis ever

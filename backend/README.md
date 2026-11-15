@@ -15,7 +15,7 @@ AI routes (session required, 10 requests/min per account):
 
 Code layout: `app/main.py` (wiring), `app/routers/` (auth, boards, ai), `app/ai_service.py` (prompt, Groq call, reply parsing and merge), `app/rate_limit.py`, `app/deps.py`, `app/repository.py` (Postgres via a connection pool), `app/models.py`. `scripts/load_check.py` runs a concurrent multi-user check against a running backend (`uv run python scripts/load_check.py --users 25`).
 
-Data persists to Postgres, via the connection string in `DATABASE_URL` (required - the app fails to start without it). Locally, `docker compose up -d postgres` (from the repository root) starts one on `localhost:5432`; in production this points at a separate managed Postgres instance (e.g. Neon) so data survives the service redeploying or spinning down. See the root [`CLAUDE.md`](../CLAUDE.md) for the full data model.
+Data persists to Postgres, via the connection string in `DATABASE_URL` (required - the app fails to start without it). Locally, `docker compose up -d postgres` (from the repository root) starts one on `localhost:5432`; in production this points at a separate managed Postgres instance (e.g. Neon) so data survives the service redeploying or spinning down. See [docs/architecture.md](../docs/architecture.md), [docs/database-schema.md](../docs/database-schema.md) and [docs/testing.md](../docs/testing.md) for details.
 
 ## Environment and secrets
 

@@ -6,6 +6,8 @@ import { forgotPassword, resetPassword, signIn, signUp, type AuthUser } from "..
 
 type SignInProps = {
   onSignIn: (user: AuthUser) => void;
+  // Shown above the sign-in form, e.g. why the user was signed out.
+  notice?: string | null;
 };
 
 type AuthView = "sign-in" | "sign-up" | "forgot-password" | "reset-password";
@@ -24,6 +26,9 @@ type PasswordFieldProps = {
   onChange: (value: string) => void;
 };
 
+const USERNAME_PATTERN = /^[a-zA-Z0-9_-]{3,32}$/;
+const MIN_PASSWORD_LENGTH = 8;
+
 function PasswordField({ id, name, label, autoComplete, value, onChange }: PasswordFieldProps) {
   const [visible, setVisible] = useState(false);
 
@@ -36,6 +41,7 @@ function PasswordField({ id, name, label, autoComplete, value, onChange }: Passw
           name={name}
           type={visible ? "text" : "password"}
           autoComplete={autoComplete}
+          maxLength={128}
           value={value}
           onChange={(event) => onChange(event.target.value)}
         />
@@ -53,7 +59,7 @@ function PasswordField({ id, name, label, autoComplete, value, onChange }: Passw
   );
 }
 
-export function SignIn({ onSignIn }: SignInProps) {
+export function SignIn({ onSignIn, notice = null }: SignInProps) {
   const [resetToken, setResetToken] = useState(tokenFromLocation);
   const [view, setView] = useState<AuthView>(() => (resetToken ? "reset-password" : "sign-in"));
   const [username, setUsername] = useState("");
@@ -62,7 +68,7 @@ export function SignIn({ onSignIn }: SignInProps) {
   const [forgotUsername, setForgotUsername] = useState("");
   const [newPassword, setNewPassword] = useState("");
   const [resetLink, setResetLink] = useState<string | null>(null);
-  const [infoMessage, setInfoMessage] = useState<string | null>(null);
+  const [infoMessage, setInfoMessage] = useState<string | null>(notice);
   const [error, setError] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -87,6 +93,15 @@ export function SignIn({ onSignIn }: SignInProps) {
 
   async function handleSignUp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    // Checked here so the message names the field; the backend enforces the same rules.
+    if (!USERNAME_PATTERN.test(username)) {
+      setError("Username must be 3-32 characters: letters, numbers, hyphens or underscores.");
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
     if (password !== confirmPassword) {
       setError("Passwords do not match.");
       return;
@@ -124,6 +139,10 @@ export function SignIn({ onSignIn }: SignInProps) {
 
   async function handleResetPassword(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (newPassword.length < MIN_PASSWORD_LENGTH) {
+      setError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
     setError("");
     setIsSubmitting(true);
     try {
@@ -150,7 +169,7 @@ export function SignIn({ onSignIn }: SignInProps) {
           <p className="auth-copy">Create an account to get your own private board.</p>
           <form className="auth-form" onSubmit={handleSignUp} noValidate>
             <label htmlFor="signup-username">Username</label>
-            <input id="signup-username" name="username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+            <input id="signup-username" name="username" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={32} autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
             <PasswordField id="signup-password" name="password" label="Password" autoComplete="new-password" value={password} onChange={setPassword} />
             <PasswordField id="signup-confirm-password" name="confirmPassword" label="Confirm password" autoComplete="new-password" value={confirmPassword} onChange={setConfirmPassword} />
             {error && <p className="auth-error" role="alert">{error}</p>}
@@ -172,7 +191,7 @@ export function SignIn({ onSignIn }: SignInProps) {
           <p className="auth-copy">Enter your username and we&apos;ll generate a reset link.</p>
           <form className="auth-form" onSubmit={handleForgotPassword} noValidate>
             <label htmlFor="forgot-username">Username</label>
-            <input id="forgot-username" name="username" type="text" autoComplete="username" value={forgotUsername} onChange={(event) => setForgotUsername(event.target.value)} />
+            <input id="forgot-username" name="username" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={32} autoComplete="username" value={forgotUsername} onChange={(event) => setForgotUsername(event.target.value)} />
             {error && <p className="auth-error" role="alert">{error}</p>}
             <button type="submit" className="button button-primary" disabled={isSubmitting}>Send reset link <ArrowRight size={17} /></button>
           </form>
@@ -220,7 +239,7 @@ export function SignIn({ onSignIn }: SignInProps) {
         <p className="auth-copy">Sign in to open your board.</p>
         <form className="auth-form" onSubmit={handleSignIn} noValidate>
           <label htmlFor="username">Username</label>
-          <input id="username" name="username" type="text" autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
+          <input id="username" name="username" type="text" autoCapitalize="none" autoCorrect="off" spellCheck={false} maxLength={32} autoComplete="username" value={username} onChange={(event) => setUsername(event.target.value)} />
           <PasswordField id="password" name="password" label="Password" autoComplete="current-password" value={password} onChange={setPassword} />
           {error && <p className="auth-error" role="alert">{error}</p>}
           <button type="submit" className="button button-primary" disabled={isSubmitting}>Open board <ArrowRight size={17} /></button>

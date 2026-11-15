@@ -1,139 +1,40 @@
-# Kanban JSON Database Proposal
+# Database schema
 
-## Status
+The store is Postgres. The schema is the `SCHEMA` string in `backend/app/repository.py`, created on start-up with `CREATE TABLE IF NOT EXISTS`. There is no migration tool; a change to an existing table has to be applied to the live database by hand.
 
-Approved for Part 5 and implemented in Parts 6 and 7. Future schema changes still require review and a versioned migration decision.
+## Tables
 
-**Storage engine note:** this document describes the original JSON-file design approved for Part 5. The store was later migrated to SQLite (`backend/data/kanban.db`, WAL mode) - see `backend/app/repository.py` and `CLAUDE.md` for the authoritative current schema and write strategy. The relational shape below (users/boards/columns/cards linked by id) still matches; the "File and Write Strategy" section does not - SQLite replaces the JSON-file-plus-atomic-rename approach entirely. Part 11 (multi-board support, see `docs/PLAN.md`) additionally relaxed the "one board per user" rule described below to "one or more boards per user."
+| Table | Columns | Notes |
+|---|---|---|
+| `users` | `id` (PK), `username` (unique), `password_hash`, `created_at` | `password_hash` is bcrypt. Usernames are case-sensitive. |
+| `boards` | `row_id` (serial), `id` (PK), `owner_id` (indexed), `name` | `row_id` only preserves creation order for the board list. A user may own many boards. |
+| `columns` | `row_id` (PK), `id`, `board_id`, `name`, `accent`, `position` | `UNIQUE(board_id, id)`. Always five per board. |
+| `cards` | `row_id` (PK), `id`, `board_id`, `column_id`, `title`, `details`, `position` | `UNIQUE(board_id, id)`. |
+| `sessions` | `token_hash` (PK), `user_id`, `created_at`, `expires_at` | Only the SHA-256 hash of the session token is stored. Sessions last 7 days. |
+| `password_resets` | `token_hash` (PK), `user_id`, `created_at`, `expires_at`, `used` | Hash only. Tokens last 30 minutes and work once. |
+| `ai_chat_messages` | `row_id` (PK), `user_id` (indexed), `board_id`, `role`, `content`, `created_at` | Every AI prompt and reply, for analysis in SQL. Not exposed through the API. |
 
-## Goals
+Ids are text (random hex for users and boards). Timestamps are ISO 8601 strings in UTC.
 
-- Keep the local database human-readable and easy to inspect.
-- Support multiple users, each able to own one or more boards (see the Part 11 update in `docs/PLAN.md`).
-- Preserve the MVP's five fixed columns and card-only content model.
-- Make card movement and reordering explicit and deterministic.
-- Avoid storing passwords; Part 4 credentials remain a client-only demo until a real authentication decision is made.
+## Relationships
 
-The machine-readable contract is [kanban-database.schema.json](kanban-database.schema.json), and a seeded instance is [kanban-database.example.json](kanban-database.example.json).
-
-## Storage Shape
-
-The database is one JSON object with five top-level collections:
-
-- `schema_version`: integer migration version. The first version is `1`.
-- `users`: user identity and the user's board reference.
-- `boards`: board metadata and owner reference.
-- `columns`: board columns, including display order and accent color.
-- `cards`: cards, including their board, column, and position.
-
-Relationships are represented by IDs:
-
-- `boards.owner_id` references `users.id` (not unique - a user may own several boards).
-- `columns.board_id` references `boards.id`.
-- `cards.board_id` references `boards.id`.
-- `cards.column_id` references `columns.id`.
-
-The collections are intentionally normalized. The API can assemble the nested board response expected by the frontend without duplicating card data in multiple places.
-
-## Example Record
-
-```json
-{
-  "schema_version": 1,
-  "users": [
-    { "id": "demo-user", "username": "user", "board_id": "q3-product-launch" }
-  ],
-  "boards": [
-    { "id": "q3-product-launch", "owner_id": "demo-user", "name": "Q3 product launch" }
-  ],
-  "columns": [
-    {
-      "id": "backlog",
-      "board_id": "q3-product-launch",
-      "name": "Backlog",
-      "accent": "#8b95a5",
-      "position": 0
-    }
-  ],
-  "cards": [
-    {
-      "id": "map-user-journey",
-      "board_id": "q3-product-launch",
-      "column_id": "backlog",
-      "title": "Map the user journey",
-      "details": "Outline the key moments from first touch to activation.",
-      "position": 0
-    }
-  ]
-}
+```
+users 1 --- n boards 1 --- 5 columns 1 --- n cards
+users 1 --- n sessions
+users 1 --- n password_resets
 ```
 
-The complete seeded example is in the JSON example file.
+Tables are linked by id, without foreign-key constraints. The repository keeps them consistent: deleting a board deletes its columns and cards in the same transaction.
 
-## Identity and Ordering Rules
+## Rules to keep in mind
 
-- IDs are stable lowercase kebab-case strings, unique within the whole database.
-- `position` is a zero-based integer, unique among siblings.
-- Columns are ordered by `position` within a board.
-- Cards are ordered by `position` within a column.
-- Moving a card changes its `column_id` and normalizes positions in both the source and destination columns.
-- Reordering a card changes positions only within its column.
-- API responses must sort columns and cards by position rather than relying on file order.
-- The MVP contract requires exactly five columns per board. Empty columns are valid; a board with no cards is valid.
-- Column IDs and card IDs are stable when names or titles are edited.
+- **Column and card ids are unique only within a board**, not across the database. Every new board has columns with the ids `backlog`, `up-next`, `in-progress`, `review` and `done`.
+- **Every board query is scoped to its owner**: `WHERE id = %s AND owner_id = %s`.
+- **`position`** is zero-based. Column positions are 0 to 4; card positions are contiguous within a column. Reads sort by position.
+- **A save replaces the board**: `save_board` deletes the board's columns and cards and inserts the new set in one transaction.
+- **Every account keeps at least one board.** Sign-up creates the first one, with five empty columns; deleting the last one is refused.
+- **Validation** lives in `backend/app/models.py`, not in the database: lengths, id patterns, the five-column rule. A board is validated when saved and again when read.
 
-## Validation Rules
+## History
 
-- Database `schema_version` must equal the supported version.
-- All referenced IDs must exist and have the correct relationship.
-- User, board, column, card, and position records must not be duplicated.
-- A user owns one or more boards; deleting a user's only remaining board is rejected.
-- A board must have exactly five columns with unique positions `0` through `4`.
-- Column names are trimmed and 1 to 80 characters.
-- Card titles are trimmed and 1 to 200 characters.
-- Card details may be empty and are limited to 5,000 characters.
-- Board names are trimmed and 1 to 120 characters.
-- Accent colors must be six-digit hexadecimal values such as `#35b9ee`.
-- Unknown fields are rejected rather than silently discarded.
-
-## Empty and Initial State
-
-If the database file does not exist, the backend creates its parent directory and writes the seeded instance from `kanban-database.example.json` atomically. A valid user or board with no cards remains an empty board with five columns; it is not reseeded.
-
-Superseded: this originally described a fixed demo user (`demo-user` / username `user`) with no password mechanism, from before real accounts existed. Every signup now creates its own user row (bcrypt password hash) and seeds exactly one board for that user; additional boards are created on request (Part 11).
-
-## File and Write Strategy
-
-- Proposed path: `backend/data/kanban.json`.
-- `backend/data/` is local application data and must not be committed.
-- Reads parse and validate the complete document before returning data.
-- Writes validate the complete new document first.
-- Writes go to a same-directory temporary file, flush and close it, then replace the target with an atomic rename.
-- A single-process write lock serializes updates. Multi-worker or multi-instance deployments are out of scope for the JSON store.
-- The backend should expose a clear error if the data directory is not writable.
-
-## Corruption and Recovery
-
-The backend must fail closed when JSON parsing or schema validation fails. It must not overwrite a corrupt database with fresh seed data. The error should identify that local data is invalid and include the path without exposing secrets.
-
-A future recovery command may copy the invalid file to a timestamped `.corrupt` artifact and restore from a known-good backup. Automatic recovery is not part of the first persistence implementation because silently discarding board changes is unsafe.
-
-## Versioning and Migration
-
-- Every future incompatible shape change increments `schema_version`.
-- A migration function converts one complete version into the next and validates the result before writing it.
-- Migrations run before repository reads return data.
-- The original file is copied to a versioned backup before migration.
-- Unsupported future versions are rejected; they are never downgraded automatically.
-- Part 6 implements version `1` only unless a new requirement requires a migration.
-
-## Review Decisions Required
-
-These decisions were approved before Part 6:
-
-1. Normalized top-level collections versus nested boards and cards.
-2. One or more boards per user, each with exactly five columns (relaxed from "exactly one board per user" in Part 11 - see `docs/PLAN.md`).
-3. `backend/data/kanban.json` as the local path (superseded by `backend/data/kanban.db`, SQLite - see the storage engine note above).
-4. Atomic writes with single-process locking (implemented via SQLite WAL mode plus an in-process lock, not a JSON temp-file rename - see `backend/app/repository.py`).
-5. Fail-closed corruption handling instead of automatic reseeding.
-6. No password field in this JSON store (superseded - the SQLite `users` table stores a bcrypt password hash once real authentication was added).
+The first version stored one JSON file, then SQLite, before moving to Postgres so data survives the backend redeploying. The relational shape has stayed the same throughout. `docs/PLAN.md` has the record of each step.

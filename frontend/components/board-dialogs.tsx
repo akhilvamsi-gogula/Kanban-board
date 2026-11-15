@@ -11,6 +11,7 @@ type DialogFrameProps = {
   children: React.ReactNode;
 };
 
+// maxLength values on the inputs below mirror the limits in backend/app/models.py.
 function DialogFrame({ title, eyebrow, onClose, children }: DialogFrameProps) {
   // Captured during the first render, before the dialog's autoFocus input takes focus.
   const [opener] = useState(() => document.activeElement as HTMLElement | null);
@@ -58,8 +59,8 @@ export function CardFormDialog({ card, onClose, onSubmit }: CardFormDialogProps)
 
   return <DialogFrame eyebrow={card ? "Refine card" : "New work item"} title={card ? "Edit card" : "Add a card"} onClose={onClose}>
     <form className="dialog-form" onSubmit={handleSubmit}>
-      <label>Title<input autoFocus required value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Prepare launch notes" /></label>
-      <label>Details<textarea value={details} onChange={(event) => setDetails(event.target.value)} placeholder="What does good look like?" rows={4} /></label>
+      <label>Title<input autoFocus required maxLength={200} value={title} onChange={(event) => setTitle(event.target.value)} placeholder="e.g. Prepare launch notes" /></label>
+      <label>Details<textarea maxLength={5000} value={details} onChange={(event) => setDetails(event.target.value)} placeholder="What does good look like?" rows={4} /></label>
       <div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary">{card ? "Save changes" : "Add card"}</button></div>
     </form>
   </DialogFrame>;
@@ -71,7 +72,7 @@ export function RenameColumnDialog({ column, onClose, onSubmit }: RenameDialogPr
   const [name, setName] = useState(column.name);
   function handleSubmit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (name.trim()) onSubmit(name.trim()); }
   return <DialogFrame eyebrow="Board structure" title="Rename column" onClose={onClose}>
-    <form className="dialog-form" onSubmit={handleSubmit}><label>Column name<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} /></label><div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary">Rename column</button></div></form>
+    <form className="dialog-form" onSubmit={handleSubmit}><label>Column name<input autoFocus required maxLength={80} value={name} onChange={(event) => setName(event.target.value)} /></label><div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary">Rename column</button></div></form>
   </DialogFrame>;
 }
 
@@ -87,7 +88,7 @@ export function BoardNameDialog({ title, submitLabel, initialName = "", placehol
   const [name, setName] = useState(initialName);
   function handleSubmit(event: FormEvent<HTMLFormElement>) { event.preventDefault(); if (name.trim()) onSubmit(name.trim()); }
   return <DialogFrame eyebrow="Board structure" title={title} onClose={onClose}>
-    <form className="dialog-form" onSubmit={handleSubmit}><label>Board name<input autoFocus required value={name} onChange={(event) => setName(event.target.value)} placeholder={placeholder} /></label><div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary">{submitLabel}</button></div></form>
+    <form className="dialog-form" onSubmit={handleSubmit}><label>Board name<input autoFocus required maxLength={120} value={name} onChange={(event) => setName(event.target.value)} placeholder={placeholder} /></label><div className="dialog-actions"><button type="button" className="button button-quiet" onClick={onClose}>Cancel</button><button type="submit" className="button button-primary">{submitLabel}</button></div></form>
   </DialogFrame>;
 }
 

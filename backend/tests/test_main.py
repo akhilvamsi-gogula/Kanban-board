@@ -239,6 +239,128 @@ def test_board_api_accepts_card_title_at_max_length_boundary() -> None:
     assert response.json()["columns"][0]["cards"][0]["title"] == "x" * 200
 
 
+@pytest.mark.parametrize("blank", ["", " ", "   ", "\t\n"])
+@pytest.mark.parametrize("field", ["card title", "column name", "board name"])
+def test_board_api_rejects_blank_text_and_board_stays_readable(field: str, blank: str) -> None:
+    # A whitespace-only value used to pass the length check, get trimmed to "" and be stored;
+    # the board could then never be read again, because "" fails the same model on the way out.
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    if field == "card title":
+        payload["columns"][0]["cards"] = [{"id": "blank", "title": blank, "details": "", "position": 0}]
+    elif field == "column name":
+        payload["columns"][0]["name"] = blank
+    else:
+        payload["name"] = blank
+
+    assert client.put(f"/api/boards/{board_id}", json=payload).status_code == 422
+    assert client.get(f"/api/boards/{board_id}").status_code == 200
+
+
+@pytest.mark.parametrize("blank", ["", "   "])
+def test_board_create_and_rename_reject_blank_names(blank: str) -> None:
+    _signup()
+    board_id = _first_board_id()
+
+    assert client.post("/api/boards", json={"name": blank}).status_code == 422
+    assert client.patch(f"/api/boards/{board_id}", json={"name": blank}).status_code == 422
+    assert [board["name"] for board in client.get("/api/boards").json()] == ["My board"]
+
+
+def test_board_api_trims_text_before_checking_length() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload(name="  Roadmap  ")
+    payload["columns"][0]["cards"] = [{"id": "padded", "title": "  " + "x" * 200 + "  ", "details": "  note  ", "position": 0}]
+
+    response = client.put(f"/api/boards/{board_id}", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["name"] == "Roadmap"
+    card = response.json()["columns"][0]["cards"][0]
+    assert card["title"] == "x" * 200
+    assert card["details"] == "note"
+
+
+def test_board_api_rejects_null_character_in_text() -> None:
+    # Postgres text columns can't store it; without the check the save failed with a 500.
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["cards"] = [{"id": "nul", "title": "a\x00b", "details": "", "position": 0}]
+
+    assert client.put(f"/api/boards/{board_id}", json=payload).status_code == 422
+
+
+@pytest.mark.parametrize("length,expected", [(5000, 200), (5001, 422)])
+def test_board_api_card_details_length_boundary(length: int, expected: int) -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["cards"] = [{"id": "details", "title": "T", "details": "d" * length, "position": 0}]
+
+    assert client.put(f"/api/boards/{board_id}", json=payload).status_code == expected
+
+
+@pytest.mark.parametrize("length,expected", [(80, 200), (81, 422)])
+def test_board_api_column_name_length_boundary(length: int, expected: int) -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    payload["columns"][0]["name"] = "n" * length
+
+    assert client.put(f"/api/boards/{board_id}", json=payload).status_code == expected
+
+
+def test_board_api_stores_unicode_text_unchanged() -> None:
+    _signup()
+    board_id = _first_board_id()
+    payload = _valid_board_payload()
+    title = "Zażółć gęślą jaźń 漢字 العربية"
+    payload["columns"][0]["cards"] = [{"id": "unicode", "title": title, "details": "<b>not html</b> ' OR 1=1 --", "position": 0}]
+
+    assert client.put(f"/api/boards/{board_id}", json=payload).status_code == 200
+    card = client.get(f"/api/boards/{board_id}").json()["columns"][0]["cards"][0]
+    assert card["title"] == title
+    assert card["details"] == "<b>not html</b> ' OR 1=1 --"
+
+
+def test_concurrent_saves_of_one_board_all_succeed_and_leave_a_valid_board() -> None:
+    # Two tabs or devices on the same account: every PUT replaces the whole board, so they
+    # must queue on the board row rather than collide on the unique (board, card id) index.
+    from concurrent.futures import ThreadPoolExecutor
+
+    _signup()
+    board_id = _first_board_id()
+
+    def save(index: int) -> int:
+        payload = _valid_board_payload()
+        payload["columns"][0]["cards"] = [{"id": "shared", "title": f"Version {index}", "details": "", "position": 0}]
+        return client.put(f"/api/boards/{board_id}", json=payload).status_code
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        statuses = list(pool.map(save, range(16)))
+
+    assert statuses == [200] * 16
+    cards = client.get(f"/api/boards/{board_id}").json()["columns"][0]["cards"]
+    assert len(cards) == 1 and cards[0]["title"].startswith("Version ")
+
+
+def test_concurrent_deletes_never_remove_the_last_board() -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    _signup()
+    for _ in range(10):
+        board_ids = [board["id"] for board in client.get("/api/boards").json()]
+        while len(board_ids) < 2:
+            board_ids.append(client.post("/api/boards", json={"name": "Spare"}).json()["id"])
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            statuses = sorted(pool.map(lambda board_id: client.delete(f"/api/boards/{board_id}").status_code, board_ids[:2]))
+        assert statuses == [204, 409]
+        assert len(client.get("/api/boards").json()) == 1
+
+
 def test_board_api_rejects_board_name_over_max_length() -> None:
     _signup()
     board_id = _first_board_id()

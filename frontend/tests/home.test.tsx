@@ -188,6 +188,44 @@ describe("Home session lifecycle", () => {
     expect(await screen.findByRole("heading", { name: "Backlog" })).toBeInTheDocument();
   });
 
+  it("returns to sign-in with an explanation when the session ends mid-use", async () => {
+    // e.g. the 7-day session expired, or a password reset on another device ended it.
+    const user = userEvent.setup();
+    const apiBoard = makeApiBoard();
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: apiBoard.id, name: apiBoard.name }] }),
+      "GET /backend-api/boards/q3-product-launch": () => ({ status: 200, body: apiBoard }),
+      "PUT /backend-api/boards/q3-product-launch": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+    });
+    render(<Home />);
+
+    await signIn(user);
+    await user.click(await screen.findByRole("button", { name: "Rename Backlog" }));
+    await user.clear(screen.getByLabelText("Column name"));
+    await user.type(screen.getByLabelText("Column name"), "Ideas");
+    await user.click(screen.getByRole("button", { name: "Rename column" }));
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Your session has ended");
+    expect(screen.getByRole("button", { name: "Open board" })).toBeInTheDocument();
+    expect(screen.queryByText("Could not save your latest change.")).not.toBeInTheDocument();
+  });
+
+  it("does not treat a wrong password as a lost session", async () => {
+    const user = userEvent.setup();
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": () => ({ status: 401, body: { detail: "Invalid username or password" } }),
+    });
+    render(<Home />);
+
+    await signIn(user);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Invalid username or password");
+    expect(screen.queryByText(/session has ended/)).not.toBeInTheDocument();
+  });
+
   it("signs up a new account and loads its fresh board", async () => {
     const user = userEvent.setup();
     stubFetch({
