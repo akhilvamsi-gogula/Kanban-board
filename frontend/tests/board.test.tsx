@@ -83,6 +83,22 @@ describe("Board", () => {
     expect(screen.getByRole("heading", { name: "Add a card" })).toBeInTheDocument();
   });
 
+  it("stops typing at the same limits the backend enforces", async () => {
+    // Without these a 201-character title was accepted on screen, then rejected by every save.
+    const user = userEvent.setup();
+    render(<Board isVisible onLogout={() => undefined} />);
+    await user.click(document.querySelector(".toolbar-add") as HTMLButtonElement);
+    const title = screen.getByLabelText("Title");
+    await user.click(title);
+    await user.paste("t".repeat(250));
+
+    expect(title).toHaveValue("t".repeat(200));
+    expect(screen.getByLabelText("Details")).toHaveAttribute("maxlength", "5000");
+    await user.keyboard("{Escape}");
+    await user.click(screen.getByRole("button", { name: "Rename Backlog" }));
+    expect(screen.getByLabelText("Column name")).toHaveAttribute("maxlength", "80");
+  });
+
   it("does not rename a column to a whitespace-only name", async () => {
     const user = userEvent.setup();
     render(<Board isVisible onLogout={() => undefined} />);
@@ -95,6 +111,63 @@ describe("Board", () => {
     expect(screen.getByRole("heading", { name: "Rename column" })).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
     expect(screen.getByRole("heading", { name: "Backlog" })).toBeInTheDocument();
+  });
+
+  it("closes a dialog on Escape and returns focus to the button that opened it", async () => {
+    const user = userEvent.setup();
+    render(<Board isVisible onLogout={() => undefined} />);
+    const renameButton = screen.getByRole("button", { name: "Rename Backlog" });
+    await user.click(renameButton);
+    expect(screen.getByLabelText("Column name")).toHaveFocus();
+
+    await user.keyboard("{Escape}");
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    expect(renameButton).toHaveFocus();
+  });
+
+  it("puts the sortable attributes on the drag handle rather than the card", () => {
+    render(<Board isVisible onLogout={() => undefined} />);
+    const handle = screen.getByRole("button", { name: "Drag Map the user journey" });
+    expect(handle).toHaveAttribute("aria-roledescription", "sortable");
+    expect(handle.closest("article")).not.toHaveAttribute("tabindex");
+  });
+
+  describe("AI assistant", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    it("keeps the conversation when the panel is closed and reopened", async () => {
+      const user = userEvent.setup();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, json: async () => ({ assistant_message: "You have 8 cards." }) }));
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+      await user.type(screen.getByLabelText("Ask the board assistant"), "how many cards?");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+      expect(await screen.findByText("You have 8 cards.")).toBeInTheDocument();
+
+      await user.click(screen.getAllByRole("button", { name: "Close AI assistant" })[1]);
+      expect(screen.queryByText("You have 8 cards.")).not.toBeInTheDocument();
+      await user.click(screen.getByLabelText("AI assistant"));
+      expect(screen.getByText("You have 8 cards.")).toBeInTheDocument();
+    });
+
+    it("shows the backend's busy message when Groq is rate limited", async () => {
+      const user = userEvent.setup();
+      vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+        ok: false,
+        status: 429,
+        json: async () => ({ detail: "AI is busy right now. Try again in 12 seconds." }),
+      }));
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+      await user.type(screen.getByLabelText("Ask the board assistant"), "add a card");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(await screen.findByText("AI is busy right now. Try again in 12 seconds.")).toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Backlog" })).getByText("Map the user journey")).toBeInTheDocument();
+    });
   });
 
   describe("AI undo", () => {

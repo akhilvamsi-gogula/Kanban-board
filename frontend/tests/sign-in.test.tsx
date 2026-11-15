@@ -75,6 +75,69 @@ describe("SignIn", () => {
     expect(api.signUp).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ["ab", "password123", "Username must be 3-32 characters"],
+    ["has space", "password123", "Username must be 3-32 characters"],
+    ["name@mail", "password123", "Username must be 3-32 characters"],
+    ["validname", "short7c", "Password must be at least 8 characters"],
+  ])("explains what is wrong with sign-up input %s / %s without calling the API", async (username, password, message) => {
+    const user = userEvent.setup();
+    render(<SignIn onSignIn={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Don't have an account? Sign up" }));
+    await user.type(screen.getByLabelText("Username"), username);
+    await user.type(screen.getByLabelText("Password"), password);
+    await user.type(screen.getByLabelText("Confirm password"), password);
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(message);
+    expect(api.signUp).not.toHaveBeenCalled();
+  });
+
+  it("accepts the shortest and longest allowed username and password", async () => {
+    const user = userEvent.setup();
+    vi.mocked(api.signUp).mockResolvedValue({ id: "3", username: "abc" });
+    render(<SignIn onSignIn={vi.fn()} />);
+
+    await user.click(screen.getByRole("button", { name: "Don't have an account? Sign up" }));
+    await user.type(screen.getByLabelText("Username"), "a_-");
+    await user.type(screen.getByLabelText("Password"), "12345678");
+    await user.type(screen.getByLabelText("Confirm password"), "12345678");
+    await user.click(screen.getByRole("button", { name: "Create account" }));
+
+    expect(api.signUp).toHaveBeenCalledWith("a_-", "12345678");
+  });
+
+  it("stops typing at the field limits and does not auto-capitalise usernames", async () => {
+    const user = userEvent.setup();
+    render(<SignIn onSignIn={vi.fn()} />);
+
+    const username = screen.getByLabelText("Username");
+    await user.type(username, "u".repeat(40));
+    expect(username).toHaveValue("u".repeat(32));
+    // Phones capitalise the first letter by default, and usernames are case-sensitive.
+    expect(username).toHaveAttribute("autocapitalize", "none");
+    expect(screen.getByLabelText("Password")).toHaveAttribute("maxlength", "128");
+  });
+
+  it("shows why the user was signed out", () => {
+    render(<SignIn onSignIn={vi.fn()} notice="Your session has ended. Sign in again to continue." />);
+
+    expect(screen.getByRole("status")).toHaveTextContent("Your session has ended");
+  });
+
+  it("rejects a too-short new password on reset without calling the API", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState({}, "", "/?reset_token=abc");
+    render(<SignIn onSignIn={vi.fn()} />);
+
+    await user.type(screen.getByLabelText("New password"), "short");
+    await user.click(screen.getByRole("button", { name: /reset password|update password|set new password/i }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("Password must be at least 8 characters");
+    expect(api.resetPassword).not.toHaveBeenCalled();
+  });
+
   it("shows a server error when sign up fails, e.g. a duplicate username", async () => {
     const user = userEvent.setup();
     const onSignIn = vi.fn();

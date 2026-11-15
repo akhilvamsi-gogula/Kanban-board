@@ -19,6 +19,14 @@ async function parseErrorDetail(response: Response): Promise<string> {
   return detail ?? `Request failed (${response.status})`;
 }
 
+// Called when a request that needs a session gets a 401: the session expired, or a password
+// reset on another device signed this one out. page.tsx uses it to return to sign-in.
+let sessionExpiredListener: (() => void) | null = null;
+
+export function onSessionExpired(listener: (() => void) | null): void {
+  sessionExpiredListener = listener;
+}
+
 async function request<T>(path: string, options?: RequestInit & { parseJson?: boolean }): Promise<T> {
   const { parseJson = true, ...init } = options ?? {};
   const response = await fetch(`${API_BASE_URL}${path}`, {
@@ -26,6 +34,8 @@ async function request<T>(path: string, options?: RequestInit & { parseJson?: bo
     credentials: "include",
     headers: { "Content-Type": "application/json", ...init.headers },
   });
+  // A 401 from /auth/* is a wrong password or token, not a lost session.
+  if (response.status === 401 && !path.startsWith("/auth/")) sessionExpiredListener?.();
   if (!response.ok) throw new Error(await parseErrorDetail(response));
   if (!parseJson) return undefined as T;
   return response.json() as Promise<T>;
@@ -117,17 +127,19 @@ export function fetchBoard(boardId: string): Promise<ApiBoard> {
   return request<ApiBoard>(`/boards/${boardId}`);
 }
 
+// UI -> wire shape: array order is the frontend's source of truth, explicit positions the API's.
+export function toApiColumns(columns: Column[]): ApiColumn[] {
+  return columns.map((column, columnIndex) => ({
+    ...column,
+    position: columnIndex,
+    cards: column.cards.map((card, cardIndex) => ({ ...card, position: cardIndex })),
+  }));
+}
+
 export function saveBoard(boardId: string, name: string, columns: Column[]): Promise<ApiBoard> {
   return request<ApiBoard>(`/boards/${boardId}`, {
     method: "PUT",
-    body: JSON.stringify({
-      name,
-      columns: columns.map((column, columnIndex) => ({
-        ...column,
-        position: columnIndex,
-        cards: column.cards.map((card, cardIndex) => ({ ...card, position: cardIndex })),
-      })),
-    }),
+    body: JSON.stringify({ name, columns: toApiColumns(columns) }),
   });
 }
 
@@ -147,6 +159,7 @@ export type AiMessage = {
   content: string;
 };
 
+// Always the complete board after the backend merged and validated the model's update.
 export type AiBoardUpdate = {
   name: string;
   columns: ApiColumn[];
@@ -168,7 +181,8 @@ export function askBoardAssistant(prompt: string, board: ApiBoard, history: AiMe
   });
 }
 
-export function toColumns(board: ApiBoard): Column[] {
+// Wire -> UI shape: sort by position, then drop it.
+export function toColumns(board: { columns: ApiColumn[] }): Column[] {
   return board.columns
     .slice()
     .sort((left, right) => left.position - right.position)

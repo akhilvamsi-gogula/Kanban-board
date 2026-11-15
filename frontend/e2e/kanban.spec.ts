@@ -61,16 +61,30 @@ async function pointIn(locator: Locator, xFraction = 0.5) {
 // Sends touch input through Chromium's real input pipeline (not synthetic JS events), so the
 // browser's own scroll/gesture handling - where the original mobile bug lived - is exercised.
 async function touchDrag(page: Page, from: Locator, to: Locator) {
+  // The previous drag's drop animation keeps its floating card on screen for a moment.
+  await expect(page.locator(".task-card-overlay")).toBeHidden();
   const start = await pointIn(from);
   const end = await pointIn(to, 0.2);
   const cdp = await page.context().newCDPSession(page);
   await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
-  await page.waitForTimeout(300);
+  // The drag starts after a 150ms press-and-hold; wait until the card has actually lifted
+  // (a busy machine can be slower than any fixed pause) before moving the finger.
+  await expect(page.locator(".task-card-overlay")).toBeVisible();
   const steps = 12;
   for (let step = 1; step <= steps; step += 1) {
     const point = { x: start.x + ((end.x - start.x) * step) / steps, y: start.y + ((end.y - start.y) * step) / steps };
     await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point] });
     await page.waitForTimeout(16);
+  }
+  // On a narrow phone the target sits in the edge zone where the board auto-scrolls during a
+  // drag, so it moves under the finger. Follow it, like a person would, until it holds still.
+  let last = end;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await page.waitForTimeout(100);
+    const current = await pointIn(to, 0.2);
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [current] });
+    if (Math.abs(current.x - last.x) < 1 && Math.abs(current.y - last.y) < 1) break;
+    last = current;
   }
   await page.waitForTimeout(100);
   await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
@@ -89,7 +103,7 @@ async function mouseDrag(page: Page, from: Locator, to: Locator) {
 
 test("drags cards within and across columns", async ({ page, browserName }, testInfo) => {
   const isTouch = testInfo.project.use.hasTouch === true;
-  test.skip(isTouch && browserName !== "chromium", "Real touch input is only scriptable in Chromium (via CDP); the Pixel project covers touch drag.");
+  test.skip(isTouch && browserName !== "chromium", "Real touch input is only scriptable in Chromium (via CDP); the pixel-7 and galaxy-s24-ultra projects cover touch drag.");
   const drag = isTouch ? touchDrag : mouseDrag;
 
   await page.goto("/");
@@ -216,6 +230,43 @@ test("reaches every column and the AI composer on a phone screen", async ({ page
   await page.getByRole("button", { name: "AI assistant" }).click();
   await expect(page.getByRole("textbox", { name: "Ask the board assistant" })).toBeInViewport();
   await expect(page.getByRole("button", { name: "Send" })).toBeInViewport();
+});
+
+test("keeps maximum-length text inside its box on a phone screen", async ({ page }) => {
+  await page.setViewportSize({ width: 384, height: 832 });
+  await page.goto("/");
+  await signUp(page, uniqueUsername("long"), "password123");
+
+  // Longest values the app allows, with no spaces to wrap at.
+  await page.locator(".toolbar-add").click();
+  await page.getByLabel("Title").fill("T".repeat(200));
+  await page.getByLabel("Details").fill("https://example.com/" + "d".repeat(400));
+  await page.locator(".dialog-form .button-primary").click();
+  await page.getByRole("button", { name: "Rename Backlog" }).click();
+  await page.getByLabel("Column name").fill("C".repeat(80));
+  await page.locator(".dialog-form .button-primary").click();
+  await page.locator(".board-switcher-trigger").click();
+  await page.getByRole("button", { name: "Rename My board" }).click();
+  await page.getByLabel("Board name").fill("B".repeat(120));
+  await page.locator(".dialog-form .button-primary").click();
+  await expect(page.getByRole("heading", { name: "B".repeat(120) })).toBeVisible();
+  await waitForSaves(page);
+
+  const spills = await page.evaluate(() => {
+    const overflowing = (selector: string) => Array.from(document.querySelectorAll<HTMLElement>(selector)).some((element) => element.scrollWidth > element.clientWidth + 1);
+    const chip = document.querySelector<HTMLElement>(".column-nav-chip")!.getBoundingClientRect();
+    return {
+      card: overflowing(".task-card"),
+      boardTitle: overflowing(".board-toolbar h1"),
+      chipPastScreen: chip.right > window.innerWidth,
+      pageScrollsSideways: document.documentElement.scrollWidth > window.innerWidth,
+    };
+  });
+  expect(spills).toEqual({ card: false, boardTitle: false, chipPastScreen: false, pageScrollsSideways: false });
+
+  // The values survive a reload unchanged.
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "T".repeat(200) })).toBeVisible({ timeout: 15000 });
 });
 
 test("hides the column chips on a desktop screen", async ({ page, isMobile }) => {

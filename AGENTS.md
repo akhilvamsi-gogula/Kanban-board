@@ -11,14 +11,14 @@
 - Rename columns through the column action
 - No more functionality: no archive, no search/filter. Keep it simple.
 - The priority is a slick, professional, gorgeous UI/UX with very simple features
-- The app should open with dummy data populated for the single board
+- A new account starts with one empty board ("My board") with the five default columns
 
 ## Technical Details
 
 - Implemented as a modern Next.js App Router app with TypeScript
 - The NextJS app should be created in a subdirectory `frontend`
 - The interactive board is client-only; board reads and writes use the FastAPI service after sign-in
-- Accounts are real: bcrypt-hashed passwords and server-side sessions (httpOnly cookie) persisted in SQLite, not client-only demo state; sessions survive a refresh
+- Accounts are real: bcrypt-hashed passwords and server-side sessions (httpOnly cookie) persisted in Postgres, not client-only demo state; sessions survive a refresh
 - Password reset has no email provider wired up; the reset token is returned directly in the API response and shown on-screen instead
 - The optional AI co-pilot sends board context to Groq only through the backend
 - Asking the AI co-pilot to "undo" reverts its last board change locally from a saved snapshot, without another Groq request
@@ -74,4 +74,4 @@ Playwright requires browser binaries and compatible system libraries. If browser
 
 1. Use latest versions of libraries and idiomatic approaches as of today
 2. Keep it simple - NEVER over-engineer, ALWAYS simplify, NO unnecessary defensive programming. No extra features - focus on simplicity.
-3. Be concise. Keep README minimal. IMPORTANT: no emojis ever
+3. Be concise. The README explains the app and its testing; reference detail goes in `docs/`. IMPORTANT: no emojis ever

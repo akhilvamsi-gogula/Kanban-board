@@ -12,7 +12,7 @@ export function ColumnNav({ columns }: { columns: Column[] }) {
       {columns.map((column) => (
         <button key={column.id} type="button" className="column-nav-chip" onClick={() => jumpTo(column.id)}>
           <span className="column-dot" style={{ backgroundColor: column.accent }} aria-hidden="true" />
-          {column.name}
+          <span className="column-nav-name">{column.name}</span>
           <span className="column-nav-count">{column.cards.length}</span>
         </button>
       ))}

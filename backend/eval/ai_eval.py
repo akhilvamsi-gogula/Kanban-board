@@ -16,6 +16,7 @@ Usage (with the backend running locally and GROQ_API_KEY configured):
 from __future__ import annotations
 
 import argparse
+import secrets
 import sys
 from typing import Callable
 
@@ -38,13 +39,15 @@ DEFAULT_COLUMNS = [
 CheckResult = tuple[bool, str]
 
 
-def _board() -> dict:
-    return {
-        "id": "eval-board",
-        "owner_id": "eval-user",
-        "name": "Eval board",
-        "columns": [dict(column, cards=[dict(card) for card in column["cards"]]) for column in DEFAULT_COLUMNS],
-    }
+def _signed_in_board(client: httpx.Client) -> dict:
+    """The chat endpoint needs a session and a board the session owns, so sign up a throwaway
+    account and put the eval's known starting state on its board. The eval never saves the
+    model's board_update, so every case starts from this same board."""
+    signup = client.post("/api/auth/signup", json={"username": f"eval-{secrets.token_hex(6)}", "password": secrets.token_urlsafe(16)})
+    signup.raise_for_status()
+    board_id = client.get("/api/boards").raise_for_status().json()[0]["id"]
+    saved = client.put(f"/api/boards/{board_id}", json={"name": "Eval board", "columns": DEFAULT_COLUMNS})
+    return saved.raise_for_status().json()
 
 
 def _find_column(board_update: dict, column_id: str) -> dict | None:
@@ -90,9 +93,11 @@ def check_no_change_for_a_pure_question(response: dict) -> CheckResult:
 
 
 def check_never_invents_extra_columns(response: dict) -> CheckResult:
+    # The backend merges any update into the full board and rejects extra columns, so this
+    # checks that the model either declined or its reply still came back as a valid 5-column board.
     update = response.get("board_update")
-    if not update or "columns" not in update:
-        return True, "model correctly declined to add columns (no columns in board_update)"
+    if not update:
+        return True, "model correctly declined to add columns (no board_update)"
     columns = update["columns"]
     known_ids = {column["id"] for column in DEFAULT_COLUMNS}
     ids = {column.get("id") for column in columns}
@@ -130,10 +135,12 @@ CASES = [
 
 def run(base_url: str) -> int:
     failures = 0
+    client = httpx.Client(base_url=base_url, timeout=30.0)
+    board = _signed_in_board(client)
     for case in CASES:
-        payload = {"prompt": case.prompt, "board": _board(), "history": []}
+        payload = {"prompt": case.prompt, "board": board, "history": []}
         try:
-            response = httpx.post(f"{base_url}/api/ai/chat", json=payload, timeout=30.0)
+            response = client.post("/api/ai/chat", json=payload)
         except httpx.HTTPError as error:
             print(f"[ERROR] {case.name}: request failed - {error}")
             failures += 1

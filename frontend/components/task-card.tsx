@@ -21,10 +21,11 @@ export function TaskCard({ card, onEdit, onDelete }: TaskCardProps) {
       ref={setNodeRef}
       style={{ transform: CSS.Transform.toString(transform), transition }}
       className={`task-card group ${isDragging ? "task-card-dragging" : ""}`}
-      {...attributes}
     >
       <div className="task-card-topline">
-        <button className="drag-handle" type="button" aria-label={`Drag ${card.title}`} {...listeners}>
+        {/* Sortable attributes (role, tabIndex, aria) go on the handle, not the article, so the
+            card's edit/delete buttons aren't nested inside another interactive element. */}
+        <button className="drag-handle" type="button" aria-label={`Drag ${card.title}`} {...attributes} {...listeners}>
           <GripVertical size={17} strokeWidth={1.8} />
         </button>
         <div className="card-actions">
