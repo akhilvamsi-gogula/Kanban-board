@@ -47,6 +47,16 @@ def test_health_endpoint() -> None:
     assert response.json() == {"status": "ok"}
 
 
+def test_api_health_endpoint_works_without_database(monkeypatch) -> None:
+    # Polled while the service wakes; it must answer even if the database isn't reachable yet.
+    monkeypatch.setattr(main, "repository", None)
+
+    response = client.get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
 def test_hello_endpoint() -> None:
     response = client.get("/api/hello")
 

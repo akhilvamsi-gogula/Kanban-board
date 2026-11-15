@@ -496,7 +496,7 @@ Drag and drop does not start on Android/iOS. Root cause: dnd-kit's pointer liste
 - [x] The Done column was hard to find: only a sliver of the second column hinted that the board scrolls sideways. Added a row of column chips (`components/column-nav.tsx`, phone and tablet widths only) that jumps to the tapped column, and `scroll-snap-type: x proximity` so a swipe lands on a whole column. Snapping is turned off while a card is dragged so it doesn't fight dnd-kit's auto-scroll.
 - [x] The AI panel's text box sat below the screen: the panel was sized to the full window, and Samsung Internet's bottom toolbar covers the window's lower edge. On phones the panel now uses `height: 100dvh - 20px` (the visible height) and a shorter text box.
 - [x] New e2e tests: at 384px wide, the Done chip brings Done into view and the AI text box and Send are on screen; the chips are hidden on desktop. `npm run lint`, `tsc`, Vitest (39) and e2e (21 passed, 3 skipped by design) pass.
-- [ ] Confirmed by the user on the S24 Ultra.
+- [x] Confirmed by the user on the S24 Ultra: Done is reachable and the AI text box is on screen.
 
 ### Part 17 validation record
 
@@ -519,17 +519,30 @@ Render's free tier sleeps the backend after 15 minutes idle; the next visitor wa
 
 ### Checklist
 
-- [ ] Backend `GET /api/health` (no database access) - reachable through the `/backend-api/*` rewrite, unlike `/health`.
-- [ ] `lib/api.ts` `waitForBackend()`: polls `/health` with a short per-attempt timeout, retries on network errors and 502/503/504 for up to 90s. Fired as soon as the page loads, so it doubles as the warm-up ping.
-- [ ] `components/wake-up-screen.tsx`: shown only if the backend hasn't answered within ~2s. "Waking up the server", one-line free-tier explanation (usually 30-50s), progress bar easing toward 95% over 50s, elapsed seconds, `role="status"`. After 90s: error + Retry.
-- [ ] `page.tsx`: `waitForBackend()` then `getCurrentUser()`, replacing the `isCheckingSession` placeholder and the silent fallback.
-- [ ] `Dockerfile`: `uv run --no-sync` so boot skips the dependency re-check.
+- [x] Backend `GET /api/health` (no database access) - reachable through the `/backend-api/*` rewrite, unlike `/health`.
+- [x] `lib/api.ts` `waitForBackend()`: polls `/health` with a 10s per-attempt timeout, retries every 1.5s on network errors and **any 5xx** for up to 90s; any other status (even a 404 from an older backend) counts as awake. Fired as soon as the page loads, so it doubles as the warm-up ping.
+- [x] `components/wake-up-screen.tsx`: shown only if the backend hasn't answered within 2s. "Waking up the server", one-line free-tier explanation (usually 30-50s), progress bar easing toward 95%, elapsed seconds, `role="status"` heading and a `role="progressbar"` with an elapsed-time `aria-valuetext`. After 90s: "The server is not responding" + Try again.
+- [x] `page.tsx`: `waitForBackend()` then `getCurrentUser()`, replacing the `isCheckingSession` "Loading..." placeholder (a blank shell for the first 2s, so a warm server shows no flash).
+- [x] `Dockerfile`: `uv run --no-sync` so boot skips the dependency re-check.
 
 ### Tests and success criteria
 
-- [ ] Vitest (fake timers): hidden on a fast backend, appears on a slow one, progress/elapsed advance, error + Retry after timeout; `waitForBackend` retry logic.
-- [ ] Backend test for `/api/health`.
-- [ ] Manual: frontend up with backend stopped shows the screen; starting the backend continues to sign-in; a warm backend never flashes the screen.
+- [x] Vitest (`tests/wake-up.test.tsx`, 7 tests, fake timers): no wake screen on a fast backend; screen appears after 2s, elapsed and progress advance, continues to sign-in when the backend answers; error + working Try again after 90s; `waitForBackend` retries on network error/500/502/503/504, treats 404 as awake, gives up after the timeout; progress never passes 95%.
+- [x] Backend test: `/api/health` answers even with no repository available.
+- [x] Manual, real app (Pixel 7 emulation, backend stopped, started ~12s in): no screen at 1s, wake screen at 6s with progress 29%, sign-in appeared on its own at 14s. Screenshot checked.
+
+### Part 18 validation record
+
+- [x] `npm run lint`, `npx tsc --noEmit`, `npm run build` pass.
+- [x] `npm run test -- --run` passes: 5 files, 46 tests (39 + 7 wake-up tests); 3 consecutive runs.
+- [x] `npm run test:e2e` passes: 17 passed, 1 skipped; 2 consecutive full runs.
+- [x] `uv run python -m pytest -q` passes: 67 tests (66 + `/api/health`).
+- [x] Found during the manual check: the first version only retried 502/503/504, but the local Next.js rewrite answers **500** when the backend is down, so it treated a dead backend as awake and dropped straight to sign-in. Now any 5xx means "still waking"; a test covers 500.
+
+### Part 18 decisions
+
+- The bar does not animate to 100% before continuing: the screen is replaced by sign-in or the board the moment the server answers, which is clearer feedback than a final fill animation and needs no extra delay.
+- No keep-alive ping (user decision): it would burn most of Render's 750 free hours/month and GitHub cron timing is not exact. Listed under Future scope.
 
 ## Part 19: Multi-User Hardening, Review and Refactor (issues #3, #14)
 

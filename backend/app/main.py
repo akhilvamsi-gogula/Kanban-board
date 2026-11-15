@@ -188,6 +188,14 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/api/health")
+def api_health() -> dict[str, str]:
+    # Same as /health, but under /api so the frontend can reach it through its /backend-api/*
+    # rewrite. Polled by the wake-up screen while Render's free tier boots the service, so it
+    # must not touch the database.
+    return {"status": "ok"}
+
+
 @app.get("/api/hello")
 def hello() -> dict[str, str]:
     return {"message": "Hello from the Kanban backend"}
