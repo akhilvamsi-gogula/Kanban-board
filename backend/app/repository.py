@@ -1,6 +1,5 @@
 import hashlib
 import secrets
-import threading
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Iterator
@@ -8,6 +7,7 @@ from typing import Iterator
 import bcrypt
 import psycopg
 import psycopg.rows
+from psycopg_pool import ConnectionPool, PoolTimeout
 
 from .models import BoardResponse, BoardSummary, BoardUpdate, CardModel, ColumnModel, UserResponse
 
@@ -155,26 +155,42 @@ def _require_board(conn: psycopg.Connection, user_id: str, board_id: str) -> dic
 
 
 class KanbanRepository:
-    def __init__(self, database_url: str) -> None:
-        self.database_url = database_url
-        self._lock = threading.RLock()
+    """All database access. Thread-safe: FastAPI runs sync routes in a threadpool, and each
+    operation borrows its own pooled connection, so concurrent users don't wait on each other
+    or pay a new (TLS) connection setup per call. Each borrowed connection is one transaction:
+    committed when the block exits normally, rolled back if it raises."""
+
+    def __init__(self, database_url: str, max_connections: int = 10) -> None:
+        self._pool = ConnectionPool(
+            database_url,
+            min_size=1,
+            max_size=max_connections,
+            kwargs={"row_factory": psycopg.rows.dict_row},
+            # Neon drops idle connections when it scales to zero; checking on checkout costs
+            # one round trip and avoids handing out a dead connection after a quiet period.
+            check=ConnectionPool.check_connection,
+            timeout=15,
+            open=True,
+        )
         with self._conn() as conn:
-            conn.execute(SCHEMA)
-            conn.commit()
+            self._create_schema(conn)
+
+    @staticmethod
+    def _create_schema(conn: psycopg.Connection) -> None:
+        conn.execute(SCHEMA)
+
+    def close(self) -> None:
+        self._pool.close()
 
     @contextmanager
     def _conn(self) -> Iterator[psycopg.Connection]:
-        with self._lock:
-            try:
-                conn = psycopg.connect(self.database_url, row_factory=psycopg.rows.dict_row)
-            except psycopg.Error as error:
-                raise DataStoreError("Kanban database is not writable") from error
-            try:
+        try:
+            with self._pool.connection() as conn:
                 yield conn
-            except psycopg.Error as error:
-                raise DataStoreError("Kanban database is unreadable") from error
-            finally:
-                conn.close()
+        except PoolTimeout as error:
+            raise DataStoreError("Kanban database is not reachable") from error
+        except psycopg.Error as error:
+            raise DataStoreError("Kanban database is unreadable") from error
 
     # -- users / auth -----------------------------------------------------
 
@@ -338,21 +354,25 @@ class KanbanRepository:
     def save_board(self, user_id: str, board_id: str, board: BoardUpdate) -> BoardResponse:
         with self._conn() as conn:
             _require_board(conn, user_id, board_id)
-            with _write(conn):
-                conn.execute("UPDATE boards SET name = %s WHERE id = %s", (board.name, board_id))
-                conn.execute("DELETE FROM columns WHERE board_id = %s", (board_id,))
-                conn.execute("DELETE FROM cards WHERE board_id = %s", (board_id,))
-                for column in board.columns:
-                    conn.execute(
-                        "INSERT INTO columns (id, board_id, name, accent, position) VALUES (%s, %s, %s, %s, %s)",
-                        (column.id, board_id, column.name, column.accent, column.position),
-                    )
-                    for card in column.cards:
-                        conn.execute(
-                            "INSERT INTO cards (id, board_id, column_id, title, details, position) VALUES (%s, %s, %s, %s, %s, %s)",
-                            (card.id, board_id, column.id, card.title, card.details, card.position),
-                        )
-        return self.get_board(user_id, board_id)
+            with _write(conn), conn.cursor() as cursor:
+                cursor.execute("UPDATE boards SET name = %s WHERE id = %s", (board.name, board_id))
+                cursor.execute("DELETE FROM columns WHERE board_id = %s", (board_id,))
+                cursor.execute("DELETE FROM cards WHERE board_id = %s", (board_id,))
+                cursor.executemany(
+                    "INSERT INTO columns (id, board_id, name, accent, position) VALUES (%s, %s, %s, %s, %s)",
+                    [(column.id, board_id, column.name, column.accent, column.position) for column in board.columns],
+                )
+                cursor.executemany(
+                    "INSERT INTO cards (id, board_id, column_id, title, details, position) VALUES (%s, %s, %s, %s, %s, %s)",
+                    [(card.id, board_id, column.id, card.title, card.details, card.position) for column in board.columns for card in column.cards],
+                )
+        # The input was fully validated and is exactly what was written, so return it (in
+        # position order, matching get_board) instead of reading the board back.
+        columns = [
+            column.model_copy(update={"cards": sorted(column.cards, key=lambda card: card.position)})
+            for column in sorted(board.columns, key=lambda column: column.position)
+        ]
+        return BoardResponse(id=board_id, owner_id=user_id, name=board.name, columns=columns)
 
     def delete_board(self, user_id: str, board_id: str) -> None:
         with self._conn() as conn:
@@ -367,7 +387,7 @@ class KanbanRepository:
 
     # -- AI chat log --------------------------------------------------------
 
-    def log_ai_chat_message(self, user_id: str | None, board_id: str | None, role: str, content: str) -> None:
+    def log_ai_chat_message(self, user_id: str, board_id: str, role: str, content: str) -> None:
         with self._conn() as conn, _write(conn):
             conn.execute(
                 "INSERT INTO ai_chat_messages (user_id, board_id, role, content, created_at) VALUES (%s, %s, %s, %s, %s)",

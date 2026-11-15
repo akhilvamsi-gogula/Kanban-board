@@ -18,7 +18,7 @@
 - Implemented as a modern Next.js App Router app with TypeScript
 - The NextJS app should be created in a subdirectory `frontend`
 - The interactive board is client-only; board reads and writes use the FastAPI service after sign-in
-- Accounts are real: bcrypt-hashed passwords and server-side sessions (httpOnly cookie) persisted in SQLite, not client-only demo state; sessions survive a refresh
+- Accounts are real: bcrypt-hashed passwords and server-side sessions (httpOnly cookie) persisted in Postgres, not client-only demo state; sessions survive a refresh
 - Password reset has no email provider wired up; the reset token is returned directly in the API response and shown on-screen instead
 - The optional AI co-pilot sends board context to Groq only through the backend
 - Asking the AI co-pilot to "undo" reverts its last board change locally from a saved snapshot, without another Groq request

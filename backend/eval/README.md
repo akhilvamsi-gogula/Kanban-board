@@ -14,13 +14,13 @@ uv run python eval/ai_eval.py
 uv run python eval/ai_eval.py --base-url http://127.0.0.1:8001
 ```
 
-It prints a PASS/FAIL line and the assistant's actual message for each case, and exits non-zero if anything failed.
+The chat endpoint requires a session, so the script signs up a throwaway `eval-<random>` account first (the backend's auth rate limit applies) and uses that account's real board. It prints a PASS/FAIL line and the assistant's actual message for each case, and exits non-zero if anything failed.
 
 ## When to run it
 
-- After changing the system prompt in `app/main.py`'s `ai_chat`.
+- After changing `SYSTEM_PROMPT` in `app/ai_service.py`.
 - After changing `GROQ_MODEL` or picking up a Groq-side model update.
-- After changing `board_update` validation.
+- After changing `board_update` parsing or `merge_board_update`.
 - Periodically, as a spot-check for silent model drift.
 
 ## What the cases cover
@@ -30,4 +30,4 @@ It prints a PASS/FAIL line and the assistant's actual message for each case, and
 - A guardrail probe: asking the model to add extra columns, which it must refuse (the app enforces exactly 5 columns elsewhere too, but this checks whether the model itself tries to comply with a request that violates that rule).
 - An adversarial prompt with an HTML-looking card title, confirming the backend stores it as a literal string rather than mangling it (the frontend is responsible for safe rendering; this only checks the backend's data contract).
 
-A failure here doesn't necessarily mean the app is broken end-to-end - for example, an invented extra column would still get rejected when the frontend tries to save the full board via `PUT /api/boards/{id}` (which strictly enforces exactly 5 columns). It means the *AI layer's own* guardrail didn't hold, which is worth knowing and fixing at the source rather than relying on the save path to catch it.
+A failure here doesn't necessarily mean the app is broken end-to-end - for example, an invented extra column is dropped by the backend's merge (columns are fixed) and any invalid result is rejected by the strict `BoardUpdate` validation. It means the *AI layer's own* guardrail didn't hold, which is worth knowing and fixing at the source rather than relying on the save path to catch it.

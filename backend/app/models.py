@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
@@ -126,7 +128,9 @@ class ResetPasswordRequest(BaseModel):
 class ChatMessage(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    role: str = Field(min_length=1, max_length=32)
+    # Only conversational roles: history is forwarded to the model verbatim, so a "system"
+    # entry would let a client inject instructions.
+    role: Literal["user", "assistant"]
     content: str = Field(min_length=1, max_length=10000)
 
 
@@ -134,8 +138,10 @@ class AiChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     prompt: str = Field(min_length=1, max_length=2000)
-    board: BoardResponse | BoardUpdate | None = None
-    history: list[ChatMessage] = Field(default_factory=list)
+    # The board currently on screen (it may include edits whose save is still in flight).
+    # Its id must belong to the signed-in user; its owner_id is ignored.
+    board: BoardResponse
+    history: list[ChatMessage] = Field(default_factory=list, max_length=50)
 
     @field_validator("prompt", mode="before")
     @classmethod
@@ -152,4 +158,6 @@ class AiChatResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     assistant_message: str = Field(min_length=1, max_length=4000)
-    board_update: dict[str, object] | None = None
+    # Always the complete board after applying the model's (possibly partial) update, already
+    # validated, so the client can apply and save it as-is.
+    board_update: BoardUpdate | None = None

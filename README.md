@@ -77,23 +77,24 @@ Sign up with any username/password to get a seeded board, then add cards, drag t
 
 ## Testing
 
-130 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
+158 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
 
 | Layer | Tool | Tests | Covers |
 |---|---|---|---|
-| Unit / integration | pytest (against a real Postgres instance) | 67 | auth, sessions, board CRUD and ownership, the AI proxy contract, rate limiting, chat-history logging, boundary/edge-case validation |
-| Component | Vitest + Testing Library | 46 | sign-in/sign-up flows, the cold-start wake-up screen, board interactions, optimistic save/rollback, serialized saves, multi-board switching, whitespace-input guards |
+| Unit / integration | pytest (against a real Postgres instance) | 82 | auth, sessions, board CRUD and ownership, the AI proxy contract and board-update merge, per-account and per-IP rate limiting, chat-history logging, boundary/edge-case validation |
+| Component | Vitest + Testing Library | 59 | pure board operations, dialog keyboard behavior, sign-in/sign-up flows, the cold-start wake-up screen, board interactions, optimistic save/rollback, serialized saves, multi-board switching, whitespace-input guards |
 | End-to-end | Playwright (desktop, iPhone, Android) | 17 | full user journeys in a real browser against a real backend, including mouse and touch drag-and-drop |
 
 ### Testing an AI feature without flaky, expensive, non-deterministic tests
 
-The AI co-pilot proxies to a live LLM, so calling the real model on every test run would be slow, flaky, and would burn API quota. Every AI-path test instead mocks the Groq HTTP call directly (`monkeypatch.setattr(main.httpx.AsyncClient, "post", fake_post)`) and asserts on the backend's own contract, not on what the model happens to say:
+The AI co-pilot proxies to a live LLM, so calling the real model on every test run would be slow, flaky, and would burn API quota. Every AI-path test instead mocks the Groq HTTP call directly (`monkeypatch.setattr(httpx.AsyncClient, "post", fake_post)`) and asserts on the backend's own contract, not on what the model happens to say:
 
 - **Malformed JSON from the model** - `test_ai_chat_retries_once_on_malformed_response_then_succeeds` and `test_ai_chat_fails_after_exhausting_retries_on_malformed_response` prove the one-retry-then-502 policy in both directions.
 - **Hallucinated success** - `test_ai_chat_retries_when_assistant_claims_a_change_without_board_update` covers a real small-model failure mode: the assistant says "I renamed the column" but sends no `board_update`. The backend catches the claim with `CLAIMED_CHANGE_PATTERN` and forces a retry instead of trusting the text.
 - **Field-name drift** - `test_ai_chat_retries_when_card_update_omits_title` is a regression test for a bug I found by hand while capturing a demo screenshot: the model returned a card using `name` instead of `title`. That shape passed the (then-incomplete) validation, saved silently failed, and the board rolled back while the chat still claimed success. Fixed by validating every card's `id`/`title`, not just column shape, and this test pins the fix down.
 - **Provider failure modes** - dedicated tests for a 429 rate limit, a request timeout, a slow keep-alive stream, and a malformed connectivity-check response, so a Groq outage degrades predictably instead of hanging the UI.
-- **Abuse protection** - `test_ai_rate_limit_blocks_excess_requests` verifies the per-IP limiter actually blocks past 10 req/min, since `/api/ai/chat` has no auth of its own.
+- **Abuse protection** - `test_ai_rate_limit_is_per_account` verifies one account is blocked past 10 AI req/min without affecting another, so no single user can drain the shared Groq quota. The auth limiter has per-IP, window-expiry and idle-key-sweep tests.
+- **Untrusted model output** - partial `board_update`s are merged into the real board and re-validated (`merge_board_update` tests), and a chat request for a board the session doesn't own returns 404.
 - **Client-side AI behavior** - `reverts the last AI board update locally, without asking the AI to reconstruct it` verifies `undo` restores a local snapshot instead of round-tripping to the model, since the assistant is never shown prior board states and cannot reconstruct one.
 
 ### Test-driven bug reproduction

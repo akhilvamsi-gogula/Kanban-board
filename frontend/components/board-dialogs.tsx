@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { X } from "lucide-react";
 import type { BoardSummary, Card, Column } from "../lib/types";
 
@@ -12,6 +12,22 @@ type DialogFrameProps = {
 };
 
 function DialogFrame({ title, eyebrow, onClose, children }: DialogFrameProps) {
+  // Captured during the first render, before the dialog's autoFocus input takes focus.
+  const [opener] = useState(() => document.activeElement as HTMLElement | null);
+
+  useEffect(() => {
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", handleKeyDown);
+    return () => document.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  // On close, give focus back to whatever opened the dialog.
+  useEffect(() => () => {
+    if (opener?.isConnected) opener.focus();
+  }, [opener]);
+
   return (
     <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
       <section className="dialog-panel" role="dialog" aria-modal="true" aria-labelledby="dialog-title">

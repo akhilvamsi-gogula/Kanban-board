@@ -117,17 +117,19 @@ export function fetchBoard(boardId: string): Promise<ApiBoard> {
   return request<ApiBoard>(`/boards/${boardId}`);
 }
 
+// UI -> wire shape: array order is the frontend's source of truth, explicit positions the API's.
+export function toApiColumns(columns: Column[]): ApiColumn[] {
+  return columns.map((column, columnIndex) => ({
+    ...column,
+    position: columnIndex,
+    cards: column.cards.map((card, cardIndex) => ({ ...card, position: cardIndex })),
+  }));
+}
+
 export function saveBoard(boardId: string, name: string, columns: Column[]): Promise<ApiBoard> {
   return request<ApiBoard>(`/boards/${boardId}`, {
     method: "PUT",
-    body: JSON.stringify({
-      name,
-      columns: columns.map((column, columnIndex) => ({
-        ...column,
-        position: columnIndex,
-        cards: column.cards.map((card, cardIndex) => ({ ...card, position: cardIndex })),
-      })),
-    }),
+    body: JSON.stringify({ name, columns: toApiColumns(columns) }),
   });
 }
 
@@ -147,6 +149,7 @@ export type AiMessage = {
   content: string;
 };
 
+// Always the complete board after the backend merged and validated the model's update.
 export type AiBoardUpdate = {
   name: string;
   columns: ApiColumn[];
@@ -168,7 +171,8 @@ export function askBoardAssistant(prompt: string, board: ApiBoard, history: AiMe
   });
 }
 
-export function toColumns(board: ApiBoard): Column[] {
+// Wire -> UI shape: sort by position, then drop it.
+export function toColumns(board: { columns: ApiColumn[] }): Column[] {
   return board.columns
     .slice()
     .sort((left, right) => left.position - right.position)

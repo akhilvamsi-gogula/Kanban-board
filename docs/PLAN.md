@@ -551,41 +551,61 @@ Account data is already isolated (every board query checks `owner_id`). The revi
 ### Checklist
 
 Concurrency:
-- [ ] Replace the global `RLock` + new-connection-per-call in `KanbanRepository` with a `psycopg_pool.ConnectionPool` opened in a FastAPI lifespan handler; one transaction per operation. Production uses Neon's pooled (`-pooler`) URL.
-- [ ] Rate limiters see the real visitor IP: uvicorn `--proxy-headers --forwarded-allow-ips="*"` (Vercel overwrites `X-Forwarded-For` with the visitor IP). Prune empty buckets.
-- [ ] `/api/ai/chat` and `/api/ai/check` require a session; AI rate limit is per account; chat logs use the session user; the request's `board.id` must belong to that user (else 404).
-- [ ] Shared Groq budget (8K tokens/min, 1,000 req/day for the whole app): forward Groq's `retry-after` as "AI is busy, try again in N seconds"; compact board JSON; check `reasoning_effort: "low"` against the eval.
+- [x] Replace the global `RLock` + new-connection-per-call in `KanbanRepository` with a `psycopg_pool.ConnectionPool` opened in a FastAPI lifespan handler; one transaction per operation. Production uses Neon's pooled (`-pooler`) URL.
+- [x] Rate limiters see the real visitor IP: uvicorn `--proxy-headers --forwarded-allow-ips="*"` (Vercel overwrites `X-Forwarded-For` with the visitor IP). Prune empty buckets.
+- [x] `/api/ai/chat` and `/api/ai/check` require a session; AI rate limit is per account; chat logs use the session user; the request's `board.id` must belong to that user (else 404).
+- [x] Shared Groq budget (8K tokens/min, 1,000 req/day for the whole app): forward Groq's `retry-after` as "AI is busy, try again in N seconds"; compact board JSON; check `reasoning_effort: "low"` against the eval.
 - [x] Out-of-order saves - done in Part 17 (saves serialized and coalesced in `flushSaves`).
-- [ ] `backend/scripts/load_check.py`: N concurrent users sign up, load, edit, save; assert each sees only their own data. Timings for 5 and 25 users, before and after.
+- [x] `backend/scripts/load_check.py`: N concurrent users sign up, load, edit, save; assert each sees only their own data. Timings for 5 and 25 users, before and after.
 
 Bugs:
-- [ ] Board is sent to Groq as a Python `repr`, not JSON - use `json.dumps`.
-- [ ] AI `board_update`: merge into the request's board server-side and validate with `BoardUpdate`, so the frontend always gets a complete valid board (partial updates currently crash `applyAiBoardUpdate`).
-- [ ] Backend tests default to a separate `kanban_test` database (created if missing) instead of truncating the dev database; importing `app.main` without `DATABASE_URL` no longer crashes test collection.
-- [ ] New card ids use a random suffix instead of `Date.now()` alone.
+- [x] Board is sent to Groq as a Python `repr`, not JSON - use `json.dumps`.
+- [x] AI `board_update`: merge into the request's board server-side and validate with `BoardUpdate`, so the frontend always gets a complete valid board (partial updates currently crash `applyAiBoardUpdate`).
+- [x] Backend tests default to a separate `kanban_test` database (created if missing) instead of truncating the dev database; importing `app.main` without `DATABASE_URL` no longer crashes test collection.
+- [x] New card ids use a random suffix instead of `Date.now()` alone.
 
 Performance:
-- [ ] `save_board` uses `executemany` and skips the extra read round-trip.
-- [ ] Fonts via `next/font` (DM Sans, Space Grotesk); drop the render-blocking `@import` and the unused Geist fonts.
-- [ ] Blocking repository calls in the async AI route run in the threadpool.
+- [x] `save_board` uses `executemany` and skips the extra read round-trip.
+- [x] Fonts via `next/font` (DM Sans, Space Grotesk); drop the render-blocking `@import` and the unused Geist fonts.
+- [x] Blocking repository calls in the async AI route run in the threadpool.
 
 Structure:
-- [ ] Split `backend/app/main.py` into `routers/{auth,boards,ai}.py`, `rate_limit.py`, `ai_service.py`; drop the redundant `asyncio.wait_for`.
-- [ ] Split `components/board.tsx`: AI panel to `components/ai-assistant.tsx`, pure board operations to `lib/board-ops.ts`; readable JSX.
-- [ ] Dialogs close on Escape and restore focus.
-- [ ] Task card `<article>` gets dnd-kit's `role="button"`/`tabIndex` attributes while it also contains the drag/edit/delete buttons (nested interactive controls, found in Part 17's e2e). Move the sortable attributes onto the drag handle so keyboard drag starts from the handle.
-- [ ] Remove dead code: `.hero*`/`.kicker` CSS, unused `public/*.svg`, stale metadata and SQLite mentions.
-- [ ] `backend/eval/ai_eval.py` signs in before calling the authenticated chat endpoint.
+- [x] Split `backend/app/main.py` into `routers/{auth,boards,ai}.py`, `rate_limit.py`, `ai_service.py`; drop the redundant `asyncio.wait_for`.
+- [x] Split `components/board.tsx`: AI panel to `components/ai-assistant.tsx`, pure board operations to `lib/board-ops.ts`; readable JSX.
+- [x] Dialogs close on Escape and restore focus.
+- [x] Task card `<article>` gets dnd-kit's `role="button"`/`tabIndex` attributes while it also contains the drag/edit/delete buttons (nested interactive controls, found in Part 17's e2e). Move the sortable attributes onto the drag handle so keyboard drag starts from the handle.
+- [x] Remove dead code: `.hero*`/`.stat-line` CSS (`.kicker` is still used), unused `public/*.svg`, stale metadata and SQLite mentions.
+- [x] `backend/eval/ai_eval.py` signs in before calling the authenticated chat endpoint.
 
 ### Tests and success criteria
 
-- [ ] Boundary tests (#14): field length limits, position/duplicate-id/5-column rules, session expiry, reset-token reuse/expiry, cross-user access (404), AI request for another user's board, rate-limit window edges, per-account AI limit, AI partial update merge success/failure, out-of-order saves, `board-ops` edge cases.
-- [ ] Load check passes with 5 and 25 concurrent users; timings recorded below.
-- [ ] Full validation set passes.
+- [x] Boundary tests (#14): field length limits, position/duplicate-id/5-column rules, session expiry, reset-token reuse/expiry, cross-user access (404), AI request for another user's board, rate-limit window edges, per-account AI limit, AI partial update merge success/failure, out-of-order saves, `board-ops` edge cases.
+- [x] Load check passes with 5 and 25 concurrent users; timings recorded below.
+- [x] Full validation set passes.
+
+### Part 19 validation record
+
+- [x] Load check (`backend/scripts/load_check.py`, local Postgres, every run isolation ok):
+
+  | Users | Before (RLock, new connection per call) | After (connection pool) |
+  |---|---|---|
+  | 5 | 4.56s wall, save p50 534ms | 0.63s wall, save p50 29ms |
+  | 25 | 21.17s wall, save p50 2598ms / p95 4318ms | 2.42s wall, save p50 147ms / p95 171ms |
+
+  Signup p50 stays ~1s at 25 users: bcrypt cost, deliberately not weakened.
+- [x] `uv run python -m pytest -q` passes: 82 tests (67 + AI auth/ownership, role validation, merge, Groq 429, per-account/per-IP/window/sweep rate limits), also without `DATABASE_URL` set.
+- [x] `npm run lint`, `npx tsc --noEmit`, `npm run build` pass.
+- [x] `npm run test -- --run` passes: 6 files, 59 tests (46 + 9 `board-ops` unit tests, dialog Escape/focus, sortable attributes on the handle, AI history survives closing the panel, Groq-busy message shown).
+- [x] `npm run test:e2e` passes: 17 passed, 1 skipped; 2 consecutive full runs.
+- [x] `uv run python eval/ai_eval.py` against the refactored backend (real Groq, `reasoning_effort: "low"`): 6/6 passed.
 
 ### Part 19 decisions
 
 - Not doing: migrations framework, foreign keys/timestamp type changes on the live Neon schema, state-management library, CSS rewrite, multi-instance session/rate-limit storage (one Render instance is enough at this scale).
+- `asyncio.wait_for` around the Groq call is kept, not removed: httpx timeouts apply per read, so a slow keep-alive stream that trickles bytes could otherwise run far past `GROQ_TIMEOUT_MS`. The existing slow-stream test covers this.
+- `--forwarded-allow-ips "*"`: anyone calling the Render URL directly (bypassing Vercel) can spoof `X-Forwarded-For` to dodge the per-IP auth limit. Accepted: bcrypt still slows brute force, and AI limits are per account, not per IP.
+- `reasoning_effort` stays `"low"`: the eval passes 6/6 with it, and it keeps tokens inside the shared 8K/min budget.
+- `.kicker` CSS is kept (the sign-in screens use it); only `.hero*` and `.stat-line` were dead.
 
 ## Part 20: AI Co-Pilot Attachments (issue #24)
 
