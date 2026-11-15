@@ -717,6 +717,12 @@ Non-obvious lessons from building and shipping this project, kept here so they i
 - [x] `docs/database-schema.md` rewritten: it still described the original JSON-file proposal and SQLite. Removed the two JSON files that belonged to it.
 - [x] `frontend/README.md` replaced (it was the create-next-app template and named a font the app no longer uses). `AGENTS.md`: new accounts start with an empty board, not dummy data.
 
+### Follow-up: the Done column was unreachable between 900 and 1270 px
+
+- [x] Reported from the phone after the review merge. The live site was correct at 384 px; measuring it at six widths showed the gap: above 900 px the chips and sideways scrolling were off, but five columns need about 1270 px, so at 980 px (a phone browser in "Desktop site" mode), on tablets and in narrow windows the last column was cut off by `.app-shell { overflow: hidden }`.
+- [x] Fix: scrolling, snapping and the chips now apply below 1280 px. Card edit and delete buttons also show on any touch device (`hover: none`), not only below 900 px.
+- [x] New e2e tests at 901, 980, 1024 and 1200 px. E2E: 13 scenarios x 4 profiles, 48 passed, 4 skipped by design, two consecutive runs.
+
 ### Not changed, on purpose
 
 - Usernames stay case-sensitive. Making them case-insensitive needs a decision about existing accounts that differ only by case.

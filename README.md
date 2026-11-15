@@ -82,10 +82,10 @@ Sign up with any username and password. To run the backend without Docker, see [
 |---|---|---|---|---|
 | Backend unit and integration | pytest, against a real Postgres (no database mocks) | auth, sessions, ownership, validation, the AI contract, rate limits, concurrency | 105 tests | yes |
 | Frontend unit and component | Vitest + Testing Library | board operations, forms, the save queue, the wake-up screen, session expiry | 70 tests | yes |
-| End-to-end | Playwright, real browsers against a real backend and database | whole user journeys, drag and drop, phone layout | 9 scenarios x 4 device profiles | no |
+| End-to-end | Playwright, real browsers against a real backend and database | whole user journeys, drag and drop, phone and tablet layout | 13 scenarios x 4 device profiles | no |
 | Load | a script that simulates concurrent users | speed and data isolation with many people at once | 5 and 25 users | no |
 | AI behavior | an eval against the real Groq model | the live model still follows the rules | 6 cases | no |
-| Real device | manual checklist on a Galaxy S24 Ultra | what emulation cannot show | 7 checks | no |
+| Real device | manual checklist on a Galaxy S24 Ultra | what emulation cannot show | 8 checks | no |
 
 GitHub Actions runs the backend suite (with a Postgres service container) and the frontend lint, type check, unit tests and build on every pull request. The end-to-end suite, load check and AI eval are run by hand before a release: they need browser binaries, a live backend and database, or paid-for model quota.
 
@@ -98,12 +98,12 @@ GitHub Actions runs the backend suite (with a Postgres service container) and th
 | Pixel 7 | Chromium | 412 x 839 | touch | Playwright emulation, real touch drag |
 | Galaxy S24 Ultra | Chromium | 384 x 824, pixel ratio 3.75 | touch | Playwright emulation with real touch drag, plus manual checks on the real phone |
 
-- Every scenario runs on every profile: 36 runs, of which 32 run and 4 are skipped by design.
+- Every scenario runs on every profile: 52 runs, of which 48 run and 4 are skipped by design.
 - The touch drag test sends real touch input through Chromium's DevTools protocol, not synthetic JavaScript events, so the browser's own scroll and gesture handling is part of the test. That is where the original phone bug was.
 - Playwright cannot script real touch input in WebKit, so touch drag is skipped on the iPhone profile. Touch drag on iOS is not covered by automation and has not yet been checked on a real iPhone.
 - The Galaxy S24 Ultra is the narrowest of the three phones, so layout problems show there first.
 
-End-to-end scenarios: drag within and across columns; the core card workflow; several boards kept separate; renaming and re-selecting a board; a narrow viewport; reaching every column and the AI text box on a phone; maximum-length text staying inside its box on a phone; desktop layout; sign-in required and logout.
+End-to-end scenarios: drag within and across columns; the core card workflow; several boards kept separate; renaming and re-selecting a board; a narrow viewport; reaching every column and the AI text box on a phone; reaching the last column at tablet and "Desktop site" widths (901, 980, 1024 and 1200 px); maximum-length text staying inside its box on a phone; desktop layout; sign-in required and logout.
 
 ### Edge and boundary cases
 
@@ -156,6 +156,7 @@ A live language model is slow, costs quota and gives different answers each run,
 | Two saves in flight could land out of order, so an older state overwrote a newer edit | writing the touch drag test | unit tests of the save queue |
 | The AI replied "added a card" with a card named by the wrong field; the save failed silently and the board rolled back | manual testing | a backend test and full validation of every card |
 | On a Galaxy S24 Ultra the Done column seemed missing and the AI text box sat under the browser toolbar | manual test on the real phone | end-to-end tests at that phone's width, and the real-device checklist |
+| Between 900 and 1270 px wide (a tablet, or a phone browser in "Desktop site" mode) the last column was cut off with no way to reach it | report from a real phone, then measuring the live site at six widths | end-to-end tests at four widths in that range |
 | A 201-character title showed on the board, then every save failed | boundary testing of the UI | input limits and a component test |
 | A phone keyboard capitalised the first letter of a case-sensitive username, so sign-in failed | review of the sign-in form on a phone | a component test |
 | A 200-character word spilled out of its card | visual check at phone width | an end-to-end layout test |

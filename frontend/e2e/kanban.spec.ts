@@ -232,6 +232,22 @@ test("reaches every column and the AI composer on a phone screen", async ({ page
   await expect(page.getByRole("button", { name: "Send" })).toBeInViewport();
 });
 
+// 980 is what a phone browser reports in "Desktop site" mode; 1024 is a tablet; 1200 is a
+// narrow laptop window. Five columns need about 1270px, so at each of these the last column
+// used to be cut off with no way to reach it (no chips, no sideways scrolling).
+for (const width of [901, 980, 1024, 1200]) {
+  test(`reaches the last column at ${width}px wide`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/");
+    await signUp(page, uniqueUsername(`w${width}`), "password123");
+
+    const done = page.locator("section.column").nth(4);
+    await expect(done).not.toBeInViewport({ ratio: 0.9 });
+    await page.getByRole("navigation", { name: "Jump to column" }).getByRole("button", { name: /Done/ }).click();
+    await expect(done).toBeInViewport({ ratio: 0.9 });
+  });
+}
+
 test("keeps maximum-length text inside its box on a phone screen", async ({ page }) => {
   await page.setViewportSize({ width: 384, height: 832 });
   await page.goto("/");
