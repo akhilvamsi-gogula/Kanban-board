@@ -496,7 +496,7 @@ Drag and drop does not start on Android/iOS. Root cause: dnd-kit's pointer liste
 - [x] The Done column was hard to find: only a sliver of the second column hinted that the board scrolls sideways. Added a row of column chips (`components/column-nav.tsx`, phone and tablet widths only) that jumps to the tapped column, and `scroll-snap-type: x proximity` so a swipe lands on a whole column. Snapping is turned off while a card is dragged so it doesn't fight dnd-kit's auto-scroll.
 - [x] The AI panel's text box sat below the screen: the panel was sized to the full window, and Samsung Internet's bottom toolbar covers the window's lower edge. On phones the panel now uses `height: 100dvh - 20px` (the visible height) and a shorter text box.
 - [x] New e2e tests: at 384px wide, the Done chip brings Done into view and the AI text box and Send are on screen; the chips are hidden on desktop. `npm run lint`, `tsc`, Vitest (39) and e2e (21 passed, 3 skipped by design) pass.
-- [ ] Confirmed by the user on the S24 Ultra.
+- [x] Confirmed by the user on the S24 Ultra: Done is reachable and the AI text box is on screen.
 
 ### Part 17 validation record
 
