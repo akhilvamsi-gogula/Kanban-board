@@ -157,7 +157,7 @@ describe("Home session lifecycle", () => {
     await user.click(await screen.findByRole("button", { name: "AI assistant" }));
     expect(screen.queryByText("Add random cards for testing")).not.toBeInTheDocument();
     expect(screen.queryByText("Added five random test cards across all columns.")).not.toBeInTheDocument();
-    expect(screen.getByText("Ask me to rename a column, add a task, or update the board.")).toBeInTheDocument();
+    expect(screen.getByText(/^Ask me to rename a column, add a task, or update the board./)).toBeInTheDocument();
     expect(screen.getByLabelText("Ask the board assistant")).toHaveValue("");
   });
 

@@ -9,11 +9,12 @@ Board routes (session-scoped, ownership-checked): `GET /api/boards`, `POST /api/
 AI routes (session required, 10 requests/min per account):
 
 - `GET /api/ai/check` performs a small Groq connectivity check.
-- `POST /api/ai/chat` accepts one of your boards, a prompt, and limited chat history, then returns structured assistant text and, if the board should change, the complete updated board.
+- `POST /api/ai/attachments` takes one file (multipart field `file`, 4 MB max; PDF, DOCX, XLSX, PPTX, PNG/JPG/WEBP, text) and returns its extracted text as `{name, text, truncated}`. Nothing is stored. Images are described by `GROQ_VISION_MODEL`.
+- `POST /api/ai/chat` accepts one of your boards, up to 3 attachments' text, a prompt, and limited chat history, then returns structured assistant text and, if the board should change, the complete updated board.
 
 `GET /api/health` (no database access) is the wake-up probe the frontend polls while Render boots.
 
-Code layout: `app/main.py` (wiring), `app/routers/` (auth, boards, ai), `app/ai_service.py` (prompt, Groq call, reply parsing and merge), `app/rate_limit.py`, `app/deps.py`, `app/repository.py` (Postgres via a connection pool), `app/models.py`. `scripts/load_check.py` runs a concurrent multi-user check against a running backend (`uv run python scripts/load_check.py --users 25`).
+Code layout: `app/main.py` (wiring), `app/routers/` (auth, boards, ai), `app/ai_service.py` (prompt, Groq call, reply parsing and merge), `app/attachments.py` (file type detection and text extraction), `app/rate_limit.py`, `app/deps.py`, `app/repository.py` (Postgres via a connection pool), `app/models.py`. `scripts/load_check.py` runs a concurrent multi-user check against a running backend (`uv run python scripts/load_check.py --users 25`).
 
 Data persists to Postgres, via the connection string in `DATABASE_URL` (required - the app fails to start without it). Locally, `docker compose up -d postgres` (from the repository root) starts one on `localhost:5432`; in production this points at a separate managed Postgres instance (e.g. Neon) so data survives the service redeploying or spinning down. See [docs/architecture.md](../docs/architecture.md), [docs/database-schema.md](../docs/database-schema.md) and [docs/testing.md](../docs/testing.md) for details.
 
@@ -26,7 +27,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-Set `GROQ_API_KEY` in that local file (get a free key at [console.groq.com](https://console.groq.com/keys), no credit card required). Never expose it through a `NEXT_PUBLIC_` variable, source code, tests, logs, or committed files. One key serves every user, so `/api/ai/*` requires sign-in and is rate-limited per account to protect Groq's shared free-tier quota. The default model is `openai/gpt-oss-20b`.
+Set `GROQ_API_KEY` in that local file (get a free key at [console.groq.com](https://console.groq.com/keys), no credit card required). Never expose it through a `NEXT_PUBLIC_` variable, source code, tests, logs, or committed files. One key serves every user, so `/api/ai/*` requires sign-in and is rate-limited per account to protect Groq's shared free-tier quota. The default model is `openai/gpt-oss-20b`; images use `GROQ_VISION_MODEL` (default `qwen/qwen3.8-27b`, empty to disable), and `AI_ATTACHMENT_MAX_CHARS` (default 10000) caps the attachment text sent per message.
 
 ## Direct run
 

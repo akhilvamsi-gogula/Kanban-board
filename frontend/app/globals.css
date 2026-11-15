@@ -73,3 +73,18 @@ button { cursor: pointer; }
 /* Edit and delete only appear on hover, which touch screens do not have. */
 @media (max-width: 900px), (hover: none) { .card-actions { opacity: 1; } }
 @media (max-width: 600px) { .topbar { gap: 10px; }.topbar-brand { gap: 10px; min-width: 0; }.brand-mark { font-size: 17px; white-space: nowrap; }.board-switcher-trigger, .topbar-actions .button { white-space: nowrap; }.board-switcher-trigger { max-width: 42vw; }.board-switcher-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }.topbar-actions { gap: 8px; }.topbar-meta { font-size: 0; }.topbar-meta span:not(.live-dot) { display: none; }.board-toolbar { flex-direction: column; align-items: stretch; gap: 14px; margin-top: 24px; }.toolbar-actions { justify-content: space-between; }.board-toolbar h1 { font-size: 21px; }.toolbar-actions { flex-wrap: wrap; justify-content: flex-end; gap: 10px; }.toolbar-add { min-height: 38px; padding: 0 12px; font-size: 12px; }.ai-launcher { order: 3; width: 100%; justify-content: flex-start; }.ai-launcher > svg { margin-left: auto; }.board-footer { display: block; }.footer-key { margin-top: 8px; }.ai-panel { top: 10px; right: 10px; bottom: auto; width: calc(100vw - 20px); height: calc(100vh - 20px); height: calc(100dvh - 20px); padding: 20px 16px 16px; }.ai-intro { margin-bottom: 12px; }.ai-composer { margin-top: 10px; }.ai-composer textarea { min-height: 68px; } }
+
+/* AI co-pilot attachments */
+.ai-panel-drop { border-color: var(--blue); box-shadow: 0 0 0 3px rgba(53,185,238,.25); }
+.ai-attach { margin-right: auto; }
+.ai-attachments { display: grid; gap: 6px; margin: 0; padding: 0; list-style: none; }
+.ai-attachment { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 5px 6px 5px 10px; border: 1px solid #365069; border-radius: 6px; color: #c7d5e8; background: #0f2438; font-size: 12px; }
+.ai-attachments-note { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.4; }
+
+.ai-attachment > svg { flex: none; color: var(--blue); }
+.ai-attachment-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ai-attachment-status { flex: none; max-width: 55%; color: var(--muted); font-size: 11px; text-align: right; }
+.ai-attachment-uploading .ai-attachment-status { color: var(--yellow); }
+.ai-attachment-error { border-color: rgba(255,135,145,.5); }
+.ai-attachment-error .ai-attachment-status { color: #ff9aa4; white-space: normal; }
+.ai-message p.ai-message-files { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--muted); font-size: 11px; }

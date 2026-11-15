@@ -33,6 +33,7 @@ flowchart LR
 | `app/deps.py` | `get_repository` (reads `app.state.repository`), `get_current_user` |
 | `app/rate_limit.py` | the one `RateLimiter` class and both limiter instances |
 | `app/ai_service.py` | system prompt, the Groq call, reply parsing, `merge_board_update` |
+| `app/attachments.py` | file type detection and text extraction for AI attachments |
 | `app/repository.py` | all database access (`KanbanRepository`) |
 | `app/models.py` | the Pydantic request and response shapes, and every length limit |
 | `scripts/load_check.py` | concurrent multi-user check, see [testing.md](testing.md) |
@@ -66,7 +67,7 @@ Boards (`/api/boards`), all requiring a session:
 
 A board id that belongs to someone else returns 404, the same as one that does not exist, so its existence is never revealed. There is no `user_id` in any URL: the session decides whose boards are in scope.
 
-AI (`/api/ai`), requiring a session: `GET /check` is a cheap live connectivity probe; `POST /chat` is described below.
+AI (`/api/ai`), requiring a session: `GET /check` is a cheap live connectivity probe; `POST /attachments` and `POST /chat` are described below.
 
 Other: `GET /api/health` answers without touching the database. The frontend polls it while the backend wakes, so it must stay that way.
 
@@ -141,6 +142,12 @@ On the backend (`routers/ai.py`, `ai_service.py`):
 5. The prompt and the reply are logged to `ai_chat_messages` for analysis in SQL. They are not exposed through any endpoint.
 
 A returned `board_update` is applied like any local edit, through `onColumnsChange`, so it takes the same optimistic save path.
+
+**Attachments.** `POST /api/ai/attachments` takes one multipart `file` (4 MB at most, because the hosting proxy caps request bodies at 4.5 MB; an over-size `Content-Length` is refused before the body is read). The type is decided from the extension plus the file's leading bytes, never the browser's content type. PDF (`pypdf`), DOCX, XLSX, PPTX and text files are parsed in the threadpool; Office files are checked for a 50 MB unpacked size first. PNG, JPG and WEBP go once to `GROQ_VISION_MODEL`, which turns the image into text. The route returns `{name, text, truncated}` and stores nothing.
+
+The browser holds that text and sends up to 3 `attachments` with the next chat message only; later turns carry just the conversation text, to stay inside the shared token budget. The chat route splits `AI_ATTACHMENT_MAX_CHARS` (10,000) between the files, wraps each as a JSON string in `<attachment>` tags, and orders the prompt as system, history, attachments, board, then the user's request last. That order matters: in testing, delimiters alone did not stop the model following an instruction planted in a file; putting the user's request last did. Only attachment names are logged. `max_tokens` is 2500 with attachments and 1500 without.
+
+In the panel, files come from the Attach button (on a phone the system picker reaches the camera and cloud drives) or drag-and-drop, and show as removable chips. `lib/api.ts` leaves `Content-Type` unset for `FormData` so the browser sets the multipart boundary.
 
 **Undo.** Before applying an update, the panel keeps a snapshot of the board. A prompt containing the word "undo" restores that snapshot locally, with no Groq request, because the model is never shown earlier board states and cannot rebuild one.
 

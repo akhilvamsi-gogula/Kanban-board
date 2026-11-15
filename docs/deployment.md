@@ -20,6 +20,8 @@ Backend (Render, or the repository-root `.env` locally; see `.env.example`):
 | `GROQ_API_KEY` | for the AI | none | Without it the AI routes return 503; everything else works. |
 | `GROQ_MODEL` | no | `openai/gpt-oss-20b` | Chat model, sent with `reasoning_effort: "low"`. |
 | `GROQ_TIMEOUT_MS` | no | `15000` | Overall deadline for one Groq request. |
+| `GROQ_VISION_MODEL` | no | `qwen/qwen3.8-27b` | Reads attached images. A Groq preview model, so it may be retired; set it to another vision model then, or to an empty value to turn image reading off. Documents keep working either way. |
+| `AI_ATTACHMENT_MAX_CHARS` | no | `10000` | Attachment text sent with one AI message, shared between its files. Raise it on a paid Groq plan. |
 | `KANBAN_CORS_ORIGINS` | no | `http://localhost:3000,http://127.0.0.1:3000` | Only matters if a browser calls the backend directly instead of through the frontend's rewrite. |
 | `KANBAN_AUTH_RATE_LIMIT` | no | `20` | Auth requests per minute per IP. Raise it for the e2e suite and the load check. |
 | `RENDER` | set by Render | none | When present, the session cookie is marked `Secure`. |
@@ -50,6 +52,7 @@ The Docker image starts with `uv run --no-sync`, which skips the dependency chec
 ## Limits to know about
 
 - **AI quota.** One Groq key serves every user: 8,000 tokens per minute and 1,000 requests per day on the free tier. Several people using the AI in the same minute will see "The AI is busy right now". Each account is also limited to 10 AI requests per minute.
+- **Attachments.** 4 MB per file, because Vercel caps request bodies at 4.5 MB and uploads pass through its rewrite. Photos straight from a phone camera are often larger and are refused. Each image costs a vision request against the same Groq quota.
 - **Single instance.** Rate limits are kept in memory, so they reset on restart and would not be shared between instances. Sessions are in Postgres and are not affected.
 - **No email.** Password reset shows the reset link on screen instead of emailing it.
 - **Not production-hardened.** No HTTPS enforcement in the app, no secret rotation, no OAuth. This is a deliberately small project.

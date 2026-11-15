@@ -29,10 +29,12 @@ export function onSessionExpired(listener: (() => void) | null): void {
 
 async function request<T>(path: string, options?: RequestInit & { parseJson?: boolean }): Promise<T> {
   const { parseJson = true, ...init } = options ?? {};
+  // FormData needs the browser to set its own multipart Content-Type (with the boundary).
+  const isForm = init.body instanceof FormData;
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
     credentials: "include",
-    headers: { "Content-Type": "application/json", ...init.headers },
+    headers: isForm ? init.headers : { "Content-Type": "application/json", ...init.headers },
   });
   // A 401 from /auth/* is a wrong password or token, not a lost session.
   if (response.status === 401 && !path.startsWith("/auth/")) sessionExpiredListener?.();
@@ -170,14 +172,30 @@ export type AiChatResponse = {
   board_update?: AiBoardUpdate;
 };
 
-export function askBoardAssistant(prompt: string, board: ApiBoard, history: AiMessage[] = []): Promise<AiChatResponse> {
+// Text the backend extracted from one attached file; nothing is stored server-side.
+export type AttachmentText = {
+  name: string;
+  text: string;
+  truncated: boolean;
+};
+
+export const MAX_ATTACHMENTS = 3;
+export const MAX_ATTACHMENT_BYTES = 4 * 1024 * 1024;
+export const ATTACHMENT_ACCEPT = [
+  ".pdf", ".docx", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg", ".webp",
+  ".txt", ".md", ".csv", ".tsv", ".json", ".yaml", ".yml", ".xml", ".html", ".log",
+].join(",");
+
+export function uploadAttachment(file: File): Promise<AttachmentText> {
+  const body = new FormData();
+  body.append("file", file);
+  return request<AttachmentText>("/ai/attachments", { method: "POST", body });
+}
+
+export function askBoardAssistant(prompt: string, board: ApiBoard, history: AiMessage[] = [], attachments: AttachmentText[] = []): Promise<AiChatResponse> {
   return request<AiChatResponse>("/ai/chat", {
     method: "POST",
-    body: JSON.stringify({
-      prompt,
-      board,
-      history,
-    }),
+    body: JSON.stringify({ prompt, board, history, attachments }),
   });
 }
 
