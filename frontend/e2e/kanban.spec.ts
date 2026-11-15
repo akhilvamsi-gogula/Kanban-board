@@ -202,6 +202,30 @@ test("keeps the board usable on a narrow viewport", async ({ page }) => {
   await expect(page.locator(".board-grid")).toHaveCSS("overflow-x", "auto");
 });
 
+test("reaches every column and the AI composer on a phone screen", async ({ page }) => {
+  // Galaxy S24 Ultra's CSS viewport; only about one column fits.
+  await page.setViewportSize({ width: 384, height: 700 });
+  await page.goto("/");
+  await signUp(page, uniqueUsername("phone"), "password123");
+
+  const done = page.locator("section.column").nth(4);
+  await expect(done).not.toBeInViewport({ ratio: 0.9 });
+  await page.getByRole("navigation", { name: "Jump to column" }).getByRole("button", { name: /Done/ }).click();
+  await expect(done).toBeInViewport({ ratio: 0.9 });
+
+  await page.getByRole("button", { name: "AI assistant" }).click();
+  await expect(page.getByRole("textbox", { name: "Ask the board assistant" })).toBeInViewport();
+  await expect(page.getByRole("button", { name: "Send" })).toBeInViewport();
+});
+
+test("hides the column chips on a desktop screen", async ({ page, isMobile }) => {
+  test.skip(isMobile, "desktop layout only");
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.goto("/");
+  await signUp(page, uniqueUsername("wide"), "password123");
+  await expect(page.getByRole("navigation", { name: "Jump to column" })).toBeHidden();
+});
+
 test("requires sign-in and supports logout", async ({ page }) => {
   const username = uniqueUsername("logout");
   const password = "password123";
