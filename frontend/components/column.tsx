@@ -18,7 +18,7 @@ export function ColumnView({ column, onAdd, onRename, onEdit, onDelete }: Column
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
 
   return (
-    <section className={`column ${isOver ? "column-over" : ""}`} aria-labelledby={`${column.id}-heading`}>
+    <section id={`column-${column.id}`} className={`column ${isOver ? "column-over" : ""}`} aria-labelledby={`${column.id}-heading`}>
       <div className="column-heading">
         <div className="column-title-wrap">
           <span className="column-dot" style={{ backgroundColor: column.accent }} aria-hidden="true" />
