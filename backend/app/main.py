@@ -70,7 +70,8 @@ SESSION_COOKIE_MAX_AGE_SECONDS = 7 * 24 * 60 * 60
 # never be sent back by the browser at all.
 SESSION_COOKIE_SECURE = bool(os.getenv("RENDER"))
 
-AUTH_RATE_LIMIT_MAX_REQUESTS = 20
+# Overridable so the Playwright suite (every test signs up from 127.0.0.1) isn't throttled.
+AUTH_RATE_LIMIT_MAX_REQUESTS = int(os.getenv("KANBAN_AUTH_RATE_LIMIT", "20"))
 AUTH_RATE_LIMIT_WINDOW_SECONDS = 60
 _auth_request_log: dict[str, deque[float]] = defaultdict(deque)
 

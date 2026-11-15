@@ -22,7 +22,7 @@ export function BoardSwitcher({ boards, activeBoardId, onSwitch, onCreate, onDel
   const activeBoard = boards.find((board) => board.id === activeBoardId);
 
   return <div className="board-switcher">
-    <button type="button" className="board-switcher-trigger" onClick={() => setIsOpen((current) => !current)} aria-haspopup="true" aria-expanded={isOpen}>{activeBoard?.name ?? "Boards"} <ChevronDown size={14} /></button>
+    <button type="button" className="board-switcher-trigger" onClick={() => setIsOpen((current) => !current)} aria-haspopup="true" aria-expanded={isOpen}><span className="board-switcher-name">{activeBoard?.name ?? "Boards"}</span> <ChevronDown size={14} /></button>
     {isOpen && <>
       <button type="button" className="board-switcher-backdrop" aria-label="Close board switcher" onClick={() => setIsOpen(false)} />
       <div className="board-switcher-panel">

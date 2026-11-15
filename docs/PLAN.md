@@ -467,6 +467,133 @@ Small, user-requested UX fix: every password field (sign-in, sign-up password + 
 - Visibility state lives per-field (not one shared toggle for the whole form) so revealing the sign-up password doesn't also reveal the confirm-password field - matches how most password managers and browsers implement the same affordance.
 - No new automated test added specifically for the toggle's click behavior (show text, click again, hide) - judged low-risk, standard-pattern UI with no business logic; existing lint/type/build/e2e coverage already exercises the changed files.
 
+## Part 17: Mobile Drag and Drop (issue #25)
+
+Drag and drop does not start on Android/iOS. Root cause: dnd-kit's pointer listeners sit on a 17px grip button whose CSS has no `touch-action: none`, so the browser claims the touch as a scroll, fires `pointercancel`, and the `PointerSensor` never activates.
+
+### Checklist
+
+- [x] `globals.css`: `.drag-handle` gets `touch-action: none`, a 36x36px hit area under `@media (pointer: coarse)` (icon size unchanged; 36 rather than 40 so it doesn't overlap the card title), and no text selection / long-press callout.
+- [x] `board.tsx`: `MouseSensor` (distance 8) + `TouchSensor` (delay 150ms, tolerance 8) + existing `KeyboardSensor`, replacing the single `PointerSensor`.
+- [x] Cross-column touch drag: dnd-kit auto-scroll moves `.board-grid` sideways while dragging - verified in the Android e2e run (a drop aimed near the right edge scrolls on to the next column); `.app-shell { overflow: hidden }` does not clip it because `.board-grid` is its own scroll container.
+- [x] Drag overlay matches the dragged card's real width instead of a fixed 230px.
+- [x] Small-screen pass at 360px (screenshots): topbar stays on one line (smaller brand, no-wrap switcher with ellipsis), toolbar stacks with the AI launcher full width, "1 cards" -> "1 card", no horizontal page overflow; `100dvh` after each `100vh`; `viewport.interactiveWidget: "resizes-content"` so the on-screen keyboard shrinks the layout and the fixed AI composer / dialog buttons stay visible on Android.
+- [x] `playwright.config.ts`: Android (`Pixel 7`) project added; backend `webServer` command is cross-platform (`uv run --directory ../backend uvicorn ...`).
+- [x] Found while testing, fixed here rather than in Part 19 because it lost real edits: concurrent full-board PUTs could land out of order and an older save overwrote a newer edit on the server (reproduced: rename a column, delete a card, reload - the rename was gone). Saves are now serialized in `page.tsx` (`flushSaves`), only the latest state is queued, stale responses are ignored, and the browser warns before leaving while a save is pending.
+- [x] Found while testing: an AI update that renames the board never persisted the new name (`persistBoard` read a stale `boardName` from its closure). Fixed with `boardNameRef`.
+- [x] Found while testing: the e2e suite (now 17 sign-ups/min from 127.0.0.1) tripped the 20/min auth rate limit. `KANBAN_AUTH_RATE_LIMIT` env override, set to 1000 for the Playwright-started backend only. Same root cause as Part 19's shared-IP limiter problem.
+
+### Tests and success criteria
+
+- [x] New e2e test drags a card within a column and across columns: mouse on `desktop`, real touch (Chromium CDP `Input.dispatchTouchEvent`, so the browser's own gesture handling is exercised) on `android`. Skipped on `mobile` (WebKit) because Playwright cannot script real touch input there - deviation from the plan, recorded here.
+- [x] The touch test fails with the fix reverted (card order unchanged) and passes with it.
+- [x] New Vitest tests: saves are serialized and an older response never overwrites a newer edit; an AI board rename is saved with the new name. Both fail against the old `page.tsx`.
+- [x] Full validation set passes (record below).
+- [ ] Confirmed by the user on a real Android phone.
+
+### Part 17 validation record
+
+- [x] `npm run lint` passes.
+- [x] `npx tsc --noEmit` passes.
+- [x] `npm run test -- --run` passes: 4 files, 39 tests (37 before + 2 save tests).
+- [x] `npm run build` passes.
+- [x] `npm run test:e2e` passes: 17 passed, 1 skipped (touch drag on WebKit), across `desktop`/`mobile`/`android`; 4 consecutive full runs with no failures.
+- [x] `uv run python -m pytest -q` (backend) passes: 66 tests.
+
+### Part 17 decisions
+
+- `TouchSensor` with a 150ms press delay, not an instant start: the handle has `touch-action: none` so it never scrolls, but the delay keeps an accidental brush of the handle while scrolling the column from turning into a drag.
+- Saves are serialized and coalesced (latest state wins) instead of numbered-and-raced: since each PUT carries the full board, sending only the newest state after the in-flight one is both correct and cheaper. Kept in `page.tsx`, no new abstraction.
+- Not adding `keepalive` to the save fetch: it caps the request body at 64KB, which a large board can exceed; the `beforeunload` warning covers leaving mid-save instead.
+
+## Part 18: Cold-Start Wake-Up Screen (issue #23)
+
+Render's free tier sleeps the backend after 15 minutes idle; the next visitor waits ~30-50s while it boots. Today the page shows a bare "Loading...", then silently falls back to the sign-in form if the session check fails, and the first sign-in hangs or errors with no explanation.
+
+### Checklist
+
+- [ ] Backend `GET /api/health` (no database access) - reachable through the `/backend-api/*` rewrite, unlike `/health`.
+- [ ] `lib/api.ts` `waitForBackend()`: polls `/health` with a short per-attempt timeout, retries on network errors and 502/503/504 for up to 90s. Fired as soon as the page loads, so it doubles as the warm-up ping.
+- [ ] `components/wake-up-screen.tsx`: shown only if the backend hasn't answered within ~2s. "Waking up the server", one-line free-tier explanation (usually 30-50s), progress bar easing toward 95% over 50s, elapsed seconds, `role="status"`. After 90s: error + Retry.
+- [ ] `page.tsx`: `waitForBackend()` then `getCurrentUser()`, replacing the `isCheckingSession` placeholder and the silent fallback.
+- [ ] `Dockerfile`: `uv run --no-sync` so boot skips the dependency re-check.
+
+### Tests and success criteria
+
+- [ ] Vitest (fake timers): hidden on a fast backend, appears on a slow one, progress/elapsed advance, error + Retry after timeout; `waitForBackend` retry logic.
+- [ ] Backend test for `/api/health`.
+- [ ] Manual: frontend up with backend stopped shows the screen; starting the backend continues to sign-in; a warm backend never flashes the screen.
+
+## Part 19: Multi-User Hardening, Review and Refactor (issues #3, #14)
+
+Account data is already isolated (every board query checks `owner_id`). The review found problems that grow with concurrent users, plus bugs and structural debt.
+
+### Checklist
+
+Concurrency:
+- [ ] Replace the global `RLock` + new-connection-per-call in `KanbanRepository` with a `psycopg_pool.ConnectionPool` opened in a FastAPI lifespan handler; one transaction per operation. Production uses Neon's pooled (`-pooler`) URL.
+- [ ] Rate limiters see the real visitor IP: uvicorn `--proxy-headers --forwarded-allow-ips="*"` (Vercel overwrites `X-Forwarded-For` with the visitor IP). Prune empty buckets.
+- [ ] `/api/ai/chat` and `/api/ai/check` require a session; AI rate limit is per account; chat logs use the session user; the request's `board.id` must belong to that user (else 404).
+- [ ] Shared Groq budget (8K tokens/min, 1,000 req/day for the whole app): forward Groq's `retry-after` as "AI is busy, try again in N seconds"; compact board JSON; check `reasoning_effort: "low"` against the eval.
+- [x] Out-of-order saves - done in Part 17 (saves serialized and coalesced in `flushSaves`).
+- [ ] `backend/scripts/load_check.py`: N concurrent users sign up, load, edit, save; assert each sees only their own data. Timings for 5 and 25 users, before and after.
+
+Bugs:
+- [ ] Board is sent to Groq as a Python `repr`, not JSON - use `json.dumps`.
+- [ ] AI `board_update`: merge into the request's board server-side and validate with `BoardUpdate`, so the frontend always gets a complete valid board (partial updates currently crash `applyAiBoardUpdate`).
+- [ ] Backend tests default to a separate `kanban_test` database (created if missing) instead of truncating the dev database; importing `app.main` without `DATABASE_URL` no longer crashes test collection.
+- [ ] New card ids use a random suffix instead of `Date.now()` alone.
+
+Performance:
+- [ ] `save_board` uses `executemany` and skips the extra read round-trip.
+- [ ] Fonts via `next/font` (DM Sans, Space Grotesk); drop the render-blocking `@import` and the unused Geist fonts.
+- [ ] Blocking repository calls in the async AI route run in the threadpool.
+
+Structure:
+- [ ] Split `backend/app/main.py` into `routers/{auth,boards,ai}.py`, `rate_limit.py`, `ai_service.py`; drop the redundant `asyncio.wait_for`.
+- [ ] Split `components/board.tsx`: AI panel to `components/ai-assistant.tsx`, pure board operations to `lib/board-ops.ts`; readable JSX.
+- [ ] Dialogs close on Escape and restore focus.
+- [ ] Task card `<article>` gets dnd-kit's `role="button"`/`tabIndex` attributes while it also contains the drag/edit/delete buttons (nested interactive controls, found in Part 17's e2e). Move the sortable attributes onto the drag handle so keyboard drag starts from the handle.
+- [ ] Remove dead code: `.hero*`/`.kicker` CSS, unused `public/*.svg`, stale metadata and SQLite mentions.
+- [ ] `backend/eval/ai_eval.py` signs in before calling the authenticated chat endpoint.
+
+### Tests and success criteria
+
+- [ ] Boundary tests (#14): field length limits, position/duplicate-id/5-column rules, session expiry, reset-token reuse/expiry, cross-user access (404), AI request for another user's board, rate-limit window edges, per-account AI limit, AI partial update merge success/failure, out-of-order saves, `board-ops` edge cases.
+- [ ] Load check passes with 5 and 25 concurrent users; timings recorded below.
+- [ ] Full validation set passes.
+
+### Part 19 decisions
+
+- Not doing: migrations framework, foreign keys/timestamp type changes on the live Neon schema, state-management library, CSS rewrite, multi-instance session/rate-limit storage (one Render instance is enough at this scale).
+
+## Part 20: AI Co-Pilot Attachments (issue #24)
+
+Attach documents and images to a co-pilot message from phone or PC so it can read them and break them into cards. Device upload only; on Android the system picker already reaches camera, local storage, Google Drive and OneDrive.
+
+### Checklist
+
+- [ ] `uv add python-multipart pypdf python-docx openpyxl python-pptx`.
+- [ ] `backend/app/attachments.py`: text from TXT/MD/CSV/JSON/code, PDF, DOCX, XLSX, PPTX; images (PNG/JPG/WEBP) turned into text once at upload by `GROQ_VISION_MODEL` (default `qwen/qwen3.8-27b`, a Groq preview model). Type decided by extension plus content sniffing.
+- [ ] `POST /api/ai/attachments` (multipart, signed-in, per-account AI limit): returns `{name, text, truncated}`; nothing stored server-side; parsing in the threadpool; corrupt/encrypted file is a clear per-file 422.
+- [ ] `AiChatRequest.attachments`: at most 3 files, 5 MB per file (4 MB per image), 10,000 extracted characters per message (`AI_ATTACHMENT_MAX_CHARS`); placed in the prompt inside delimiters as untrusted reference data.
+- [ ] Attachments go with the next message only (not resent every turn) to stay inside the shared 8K tokens/min budget.
+- [ ] Only attachment names are logged in `ai_chat_messages`, never contents.
+- [ ] Frontend: paperclip + hidden file input, desktop drag-and-drop zone, chips (uploading / ready / shortened / error, removable); `request()` doesn't force a JSON content type for `FormData`.
+- [ ] Docs and `.env.example` (`GROQ_VISION_MODEL`, `AI_ATTACHMENT_MAX_CHARS`); an attachment case in `backend/eval/ai_eval.py`.
+
+### Tests and success criteria
+
+- [ ] Backend: one small generated file per format, size/count/type rejections, truncation flag, corrupt/encrypted file, sign-in required, vision call mocked, attachments delimited in the outgoing prompt.
+- [ ] Frontend: attach/remove chip, upload error, attachments sent once then cleared.
+- [ ] Manual: each format uploads; "break this document into cards" updates the board; Undo reverts it; works from an Android phone.
+
+## Future Scope
+
+- In-app OneDrive / Google Drive upload (picker SDK + OAuth app registration) - not needed on Android, where the system picker already reaches both.
+- Larger or full-length attachments after a paid Groq tier, or chunked summarisation.
+- Removing cold starts entirely: keep-alive ping or a paid Render instance.
+
 ## Cross-Phase Completion Checks
 
 - [x] Update this document when requirements or architectural decisions change.

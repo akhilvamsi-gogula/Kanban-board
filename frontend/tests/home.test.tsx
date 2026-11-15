@@ -353,3 +353,88 @@ describe("Home session lifecycle", () => {
     expect(screen.queryByRole("heading", { name: "Renamed while saving" })).not.toBeInTheDocument();
   });
 });
+
+describe("Home board saves", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  // Every PUT replaces the whole board, so two in flight at once could land out of order and
+  // the older one would overwrite the newer edit on the server.
+  it("sends saves one at a time and never lets an older response overwrite a newer edit", async () => {
+    const user = userEvent.setup();
+    const putBodies: Array<{ name: string; columns: Array<{ name: string }> }> = [];
+    const pendingPuts: Array<() => void> = [];
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
+      const key = `${options?.method ?? "GET"} ${pathOf(input)}`;
+      const respond = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+      if (key === "GET /backend-api/auth/me") return respond(401, { detail: "Not authenticated" });
+      if (key === "POST /backend-api/auth/login") return respond(200, { id: "1", username: "user" });
+      if (key === "GET /backend-api/boards") return respond(200, [{ id: "q3-product-launch", name: "Q3 product launch" }]);
+      if (key === "GET /backend-api/boards/q3-product-launch") return respond(200, makeApiBoard());
+      if (key === "PUT /backend-api/boards/q3-product-launch") {
+        const body = JSON.parse(String(options?.body));
+        putBodies.push(body);
+        await new Promise<void>((resolve) => pendingPuts.push(resolve));
+        return respond(200, { ...makeApiBoard(), ...body });
+      }
+      throw new Error(`Unhandled request: ${key}`);
+    }));
+    render(<Home />);
+    await signIn(user);
+
+    async function renameColumn(from: string, to: string) {
+      await user.click(await screen.findByRole("button", { name: `Rename ${from}` }));
+      await user.clear(screen.getByLabelText("Column name"));
+      await user.type(screen.getByLabelText("Column name"), to);
+      await user.click(screen.getByRole("button", { name: "Rename column" }));
+    }
+
+    await renameColumn("Backlog", "Ideas");
+    await renameColumn("Up next", "Soon");
+    await renameColumn("Soon", "Later");
+    expect(putBodies).toHaveLength(1);
+
+    // The first save's response (only "Ideas") must not undo the newer edits on screen.
+    pendingPuts.shift()?.();
+    await waitFor(() => expect(putBodies).toHaveLength(2));
+    expect(screen.getByRole("heading", { name: "Later" })).toBeInTheDocument();
+    // Intermediate state "Soon" is skipped: only the latest state is sent next.
+    expect(putBodies[1].columns.map((column) => column.name).slice(0, 2)).toEqual(["Ideas", "Later"]);
+
+    pendingPuts.shift()?.();
+    await waitFor(() => expect(screen.queryByText("Saving...")).not.toBeInTheDocument());
+    expect(screen.getByRole("heading", { name: "Ideas" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Later" })).toBeInTheDocument();
+    expect(putBodies).toHaveLength(2);
+  });
+
+  it("saves the board name an AI update sets, not the old one", async () => {
+    const user = userEvent.setup();
+    const putNames: string[] = [];
+    stubFetch({
+      "GET /backend-api/auth/me": () => ({ status: 401, body: { detail: "Not authenticated" } }),
+      "POST /backend-api/auth/login": () => ({ status: 200, body: { id: "1", username: "user" } }),
+      "GET /backend-api/boards": () => ({ status: 200, body: [{ id: "q3-product-launch", name: "Q3 product launch" }] }),
+      "GET /backend-api/boards/q3-product-launch": () => ({ status: 200, body: makeApiBoard() }),
+      "PUT /backend-api/boards/q3-product-launch": (options) => {
+        const body = JSON.parse(String(options?.body));
+        putNames.push(body.name);
+        return { status: 200, body: { ...makeApiBoard(), ...body } };
+      },
+      "POST /backend-api/ai/chat": () => ({
+        status: 200,
+        body: { assistant_message: "Renamed the board.", board_update: { name: "Launch plan", columns: makeApiBoard().columns } },
+      }),
+    });
+    render(<Home />);
+    await signIn(user);
+
+    await user.click(await screen.findByRole("button", { name: "AI assistant" }));
+    await user.type(screen.getByLabelText("Ask the board assistant"), "Rename the board to Launch plan");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() => expect(putNames).toEqual(["Launch plan"]));
+    expect(await screen.findByRole("heading", { name: "Launch plan", level: 1 })).toBeInTheDocument();
+  });
+});

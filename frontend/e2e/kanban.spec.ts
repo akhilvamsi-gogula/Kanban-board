@@ -1,4 +1,4 @@
-import { expect, Page, test } from "@playwright/test";
+import { expect, Locator, Page, test } from "@playwright/test";
 
 function uniqueUsername(prefix: string) {
   return `${prefix}-${Date.now()}-${Math.floor(Math.random() * 10000)}`;
@@ -28,6 +28,89 @@ async function signIn(page: Page, username: string, password: string) {
   await expect(page.getByRole("heading", { name: "My board" })).toBeVisible({ timeout: 15000 });
 }
 
+// Board saves run one at a time; wait for the queue to drain like a user would before leaving.
+async function waitForSaves(page: Page) {
+  await expect(page.getByText("Saving...")).not.toBeVisible();
+}
+
+async function reloadAfterSaves(page: Page) {
+  await waitForSaves(page);
+  await page.reload();
+}
+
+async function addCard(page: Page, title: string) {
+  await page.locator(".toolbar-add").click();
+  await page.getByLabel("Title").fill(title);
+  await page.locator(".dialog-form .button-primary").click();
+  await expect(page.getByRole("heading", { name: title })).toBeVisible();
+  await waitForSaves(page);
+}
+
+function columnCardTitles(page: Page, columnIndex: number) {
+  return page.locator("section.column").nth(columnIndex).locator(".task-card h3");
+}
+
+// Point inside an element; xFraction < 0.5 aims left of center, away from the right edge where
+// dnd-kit starts auto-scrolling the horizontally scrolling board on a narrow phone screen.
+async function pointIn(locator: Locator, xFraction = 0.5) {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("element is not visible");
+  return { x: box.x + box.width * xFraction, y: box.y + box.height / 2 };
+}
+
+// Sends touch input through Chromium's real input pipeline (not synthetic JS events), so the
+// browser's own scroll/gesture handling - where the original mobile bug lived - is exercised.
+async function touchDrag(page: Page, from: Locator, to: Locator) {
+  const start = await pointIn(from);
+  const end = await pointIn(to, 0.2);
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [start] });
+  await page.waitForTimeout(300);
+  const steps = 12;
+  for (let step = 1; step <= steps; step += 1) {
+    const point = { x: start.x + ((end.x - start.x) * step) / steps, y: start.y + ((end.y - start.y) * step) / steps };
+    await cdp.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [point] });
+    await page.waitForTimeout(16);
+  }
+  await page.waitForTimeout(100);
+  await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  await cdp.detach();
+}
+
+async function mouseDrag(page: Page, from: Locator, to: Locator) {
+  const start = await pointIn(from);
+  const end = await pointIn(to, 0.2);
+  await page.mouse.move(start.x, start.y);
+  await page.mouse.down();
+  await page.mouse.move(end.x, end.y, { steps: 12 });
+  await page.waitForTimeout(100);
+  await page.mouse.up();
+}
+
+test("drags cards within and across columns", async ({ page, browserName }, testInfo) => {
+  const isTouch = testInfo.project.use.hasTouch === true;
+  test.skip(isTouch && browserName !== "chromium", "Real touch input is only scriptable in Chromium (via CDP); the Pixel project covers touch drag.");
+  const drag = isTouch ? touchDrag : mouseDrag;
+
+  await page.goto("/");
+  await signUp(page, uniqueUsername("drag"), "password123");
+  await addCard(page, "Card A");
+  await addCard(page, "Card B");
+  await expect(columnCardTitles(page, 0)).toHaveText(["Card A", "Card B"]);
+
+  // Within a column: drop Card B onto Card A's position.
+  await drag(page, page.getByRole("button", { name: "Drag Card B", exact: true }), page.getByRole("heading", { name: "Card A" }));
+  await expect(columnCardTitles(page, 0)).toHaveText(["Card B", "Card A"]);
+
+  // Across columns: drop Card A into the empty second column.
+  await drag(page, page.getByRole("button", { name: "Drag Card A", exact: true }), page.locator("section.column").nth(1).locator(".empty-column"));
+  await expect(columnCardTitles(page, 0)).toHaveText(["Card B"]);
+  await expect(columnCardTitles(page, 1)).toHaveText(["Card A"]);
+
+  await reloadAfterSaves(page);
+  await expect(columnCardTitles(page, 1)).toHaveText(["Card A"], { timeout: 15000 });
+});
+
 test("supports the core board workflow", async ({ page }) => {
   const username = uniqueUsername("workflow");
   const password = "password123";
@@ -54,7 +137,7 @@ test("supports the core board workflow", async ({ page }) => {
 
   // Real sessions persist across reload (unlike the old demo-only auth), so no
   // re-sign-in is needed here - reload just confirms the rename survived a fresh fetch.
-  await page.reload();
+  await reloadAfterSaves(page);
   await expect(page.getByRole("heading", { name: "Ideas" })).toBeVisible({ timeout: 15000 });
 });
 
@@ -82,7 +165,7 @@ test("supports creating, switching between, and isolating multiple boards", asyn
   await expect(page.getByRole("heading", { name: "My board" })).toBeVisible();
   await expect(page.getByText("Only on the first board")).toBeVisible();
 
-  await page.reload();
+  await reloadAfterSaves(page);
   await expect(page.getByRole("heading", { name: "My board" })).toBeVisible({ timeout: 15000 });
 });
 
@@ -105,7 +188,7 @@ test("supports renaming a board and re-selecting the active board without gettin
   await expect(page.getByText("Loading your board...")).not.toBeVisible();
   await expect(page.getByRole("heading", { name: "Renamed board" })).toBeVisible();
 
-  await page.reload();
+  await reloadAfterSaves(page);
   await expect(page.getByRole("heading", { name: "Renamed board" })).toBeVisible({ timeout: 15000 });
 });
 
