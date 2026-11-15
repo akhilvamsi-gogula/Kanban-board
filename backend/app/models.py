@@ -128,6 +128,18 @@ class ChatMessage(BaseModel):
     content: Text = Field(min_length=1, max_length=10000)
 
 
+class AttachmentText(BaseModel):
+    """Text extracted from one attached file by POST /api/ai/attachments. The client sends it
+    back with the next chat message; the server stores neither the file nor this text."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=200)
+    # Hard ceiling only; the chat route clips attachments to AI_ATTACHMENT_MAX_CHARS in total.
+    text: str = Field(min_length=1, max_length=100_000)
+    truncated: bool = False
+
+
 class AiChatRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -136,6 +148,7 @@ class AiChatRequest(BaseModel):
     # Its id must belong to the signed-in user; its owner_id is ignored.
     board: BoardResponse
     history: list[ChatMessage] = Field(default_factory=list, max_length=50)
+    attachments: list[AttachmentText] = Field(default_factory=list, max_length=3)
 
 
 class AiChatResponse(BaseModel):

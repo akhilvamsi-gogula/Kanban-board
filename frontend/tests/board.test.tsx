@@ -153,6 +153,128 @@ describe("Board", () => {
       expect(screen.getByText("You have 8 cards.")).toBeInTheDocument();
     });
 
+    function routeFetch(handlers: Record<string, (init: RequestInit) => { ok: boolean; status?: number; body: unknown }>) {
+      const calls: Array<{ url: string; init: RequestInit }> = [];
+      const fetchMock = vi.fn(async (url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        const key = Object.keys(handlers).find((path) => url.endsWith(path));
+        if (!key) throw new Error(`unexpected request ${url}`);
+        const { ok, status = 200, body } = handlers[key](init);
+        return { ok, status, json: async () => body };
+      });
+      vi.stubGlobal("fetch", fetchMock);
+      return calls;
+    }
+
+    async function openAssistant(user: ReturnType<typeof userEvent.setup>) {
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+    }
+
+    it("uploads an attachment, sends its text with the next message only, then clears it", async () => {
+      const user = userEvent.setup();
+      const calls = routeFetch({
+        "/ai/attachments": () => ({ ok: true, body: { name: "spec.txt", text: "Build login", truncated: false } }),
+        "/ai/chat": () => ({ ok: true, body: { assistant_message: "Here is what the spec asks for." } }),
+      });
+      await openAssistant(user);
+
+      await user.upload(screen.getByTestId("attachment-input"), new File(["Build login"], "spec.txt", { type: "text/plain" }));
+      const chips = await screen.findByRole("list", { name: "Attached files" });
+      expect(await within(chips).findByText("1 KB")).toBeInTheDocument();
+      expect(calls[0].init.body).toBeInstanceOf(FormData);
+      expect(new Headers(calls[0].init.headers).has("Content-Type")).toBe(false);
+
+      await user.type(screen.getByLabelText("Ask the board assistant"), "summarize this");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(await screen.findByText("Here is what the spec asks for.")).toBeInTheDocument();
+      const chatBody = JSON.parse(String(calls[1].init.body));
+      expect(chatBody.attachments).toEqual([{ name: "spec.txt", text: "Build login", truncated: false }]);
+      expect(chatBody.history.every((message: object) => Object.keys(message).sort().join() === "content,role")).toBe(true);
+      expect(screen.queryByRole("list", { name: "Attached files" })).not.toBeInTheDocument();
+      expect(screen.getByText(/spec\.txt/)).toBeInTheDocument();
+    });
+
+    it("sends only the file that is still attached after another was removed", async () => {
+      // The first file is removed while it is still being read; its late result must not
+      // come back as a chip or reach the chat request.
+      const user = userEvent.setup();
+      let finishDeck: (value: { ok: boolean; status: number; json: () => Promise<unknown> }) => void = () => undefined;
+      const calls: Array<{ url: string; init: RequestInit }> = [];
+      vi.stubGlobal("fetch", vi.fn((url: string, init: RequestInit) => {
+        calls.push({ url, init });
+        if (url.endsWith("/ai/chat")) return Promise.resolve({ ok: true, status: 200, json: async () => ({ assistant_message: "Read the notes." }) });
+        const file = (init.body as FormData).get("file") as File;
+        if (file.name === "deck.pptx") return new Promise((resolve) => { finishDeck = resolve; });
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ name: "notes.txt", text: "Notes text", truncated: false }) });
+      }));
+      await openAssistant(user);
+
+      await user.upload(screen.getByTestId("attachment-input"), new File(["PK"], "deck.pptx"));
+      expect(await screen.findByText("Reading...")).toBeInTheDocument();
+      expect(screen.getByText(/read with your next message only/)).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Remove deck.pptx" }));
+      await user.upload(screen.getByTestId("attachment-input"), new File(["Notes text"], "notes.txt", { type: "text/plain" }));
+      finishDeck({ ok: true, status: 200, json: async () => ({ name: "deck.pptx", text: "Slide text", truncated: false }) });
+      const chips = await screen.findByRole("list", { name: "Attached files" });
+      expect(await within(chips).findByText("1 KB")).toBeInTheDocument();
+      expect(within(chips).queryByText("deck.pptx")).not.toBeInTheDocument();
+
+      await user.type(screen.getByLabelText("Ask the board assistant"), "make cards");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      expect(await screen.findByText("Read the notes.")).toBeInTheDocument();
+      const chat = calls.find((call) => call.url.endsWith("/ai/chat"));
+      expect(JSON.parse(String(chat?.init.body)).attachments).toEqual([{ name: "notes.txt", text: "Notes text", truncated: false }]);
+    });
+
+    it("shows why a file could not be read and leaves it out of the message", async () => {
+      const user = userEvent.setup();
+      const calls = routeFetch({
+        "/ai/attachments": () => ({ ok: false, status: 422, body: { detail: "This PDF is password-protected." } }),
+        "/ai/chat": () => ({ ok: true, body: { assistant_message: "Ok." } }),
+      });
+      await openAssistant(user);
+
+      await user.upload(screen.getByTestId("attachment-input"), new File(["%PDF-"], "secret.pdf", { type: "application/pdf" }));
+      expect(await screen.findByText("This PDF is password-protected.")).toBeInTheDocument();
+
+      await user.type(screen.getByLabelText("Ask the board assistant"), "hello");
+      await user.click(screen.getByRole("button", { name: "Send" }));
+
+      await screen.findByText("Ok.");
+      expect(JSON.parse(String(calls[1].init.body)).attachments).toEqual([]);
+    });
+
+    it("rejects files over the size limit without uploading, and lets a chip be removed", async () => {
+      const user = userEvent.setup();
+      const calls = routeFetch({});
+      await openAssistant(user);
+      const big = new File(["x"], "huge.txt", { type: "text/plain" });
+      Object.defineProperty(big, "size", { value: 5 * 1024 * 1024 });
+
+      await user.upload(screen.getByTestId("attachment-input"), big);
+
+      expect(screen.getByText("Larger than 4 MB")).toBeInTheDocument();
+      expect(calls).toHaveLength(0);
+      await user.click(screen.getByRole("button", { name: "Remove huge.txt" }));
+      expect(screen.queryByText("huge.txt")).not.toBeInTheDocument();
+    });
+
+    it("limits a message to three attachments", async () => {
+      const user = userEvent.setup();
+      routeFetch({ "/ai/attachments": () => ({ ok: true, body: { name: "a.txt", text: "a", truncated: false } }) });
+      await openAssistant(user);
+      const files = ["a", "b", "c", "d"].map((name) => new File([name], `${name}.txt`, { type: "text/plain" }));
+
+      await user.upload(screen.getByTestId("attachment-input"), files);
+
+      expect(screen.getByText("You can attach up to 3 files per message.")).toBeInTheDocument();
+      expect(within(screen.getByRole("list", { name: "Attached files" })).getAllByRole("listitem")).toHaveLength(3);
+      expect(screen.getByRole("button", { name: /Attach/ })).toBeDisabled();
+    });
+
     it("shows the backend's busy message when Groq is rate limited", async () => {
       const user = userEvent.setup();
       vi.stubGlobal("fetch", vi.fn().mockResolvedValue({

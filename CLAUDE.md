@@ -59,6 +59,7 @@ After changing the AI system prompt, `GROQ_MODEL` or board-update merging, also 
 - **Column and card ids are unique per board, not globally.**
 - **Limits live in `backend/app/models.py`.** The matching `maxLength` on frontend inputs must be changed with them.
 - **Touch drag depends on `touch-action: none` on `.drag-handle`** and the separate mouse and touch sensors in `components/board.tsx`.
+- **In an AI chat with attachments, the user's request must stay last in the prompt.** That order is what stops instructions hidden in a file; `ai_eval.py`'s `attachment_spec_to_cards` case checks it. Attached files are never stored and only their names are logged.
 - **`GET /api/health` must not touch the database.** The wake-up screen polls it while the backend boots.
 - **No migration tool.** The schema is `CREATE TABLE IF NOT EXISTS`; changing an existing table needs a manual change on the live database.
 
