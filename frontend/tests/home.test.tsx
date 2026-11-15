@@ -14,7 +14,7 @@ function pathOf(input: RequestInfo | URL): string {
 function stubFetch(handlers: Record<string, Handler>) {
   vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
     const key = `${options?.method ?? "GET"} ${pathOf(input)}`;
-    const handler = handlers[key];
+    const handler = handlers[key] ?? (key === "GET /backend-api/health" ? () => ({ status: 200, body: { status: "ok" } }) : undefined);
     if (!handler) throw new Error(`Unhandled request: ${key}`);
     const { status, body } = handler(options);
     return { ok: status >= 200 && status < 300, status, json: async () => body };
@@ -368,6 +368,7 @@ describe("Home board saves", () => {
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, options?: RequestInit) => {
       const key = `${options?.method ?? "GET"} ${pathOf(input)}`;
       const respond = (status: number, body: unknown) => ({ ok: status >= 200 && status < 300, status, json: async () => body });
+      if (key === "GET /backend-api/health") return respond(200, { status: "ok" });
       if (key === "GET /backend-api/auth/me") return respond(401, { detail: "Not authenticated" });
       if (key === "POST /backend-api/auth/login") return respond(200, { id: "1", username: "user" });
       if (key === "GET /backend-api/boards") return respond(200, [{ id: "q3-product-launch", name: "Q3 product launch" }]);

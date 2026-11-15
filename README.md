@@ -6,7 +6,7 @@ A full-stack, multi-user Kanban app - real accounts, private boards, drag-and-dr
 
 **App:** https://kanban-board-seven-lilac.vercel.app/
 
-The backend is hosted on Render's free tier, which spins down after inactivity - the first request after a period of idle can take 30-50 seconds to wake it up, so give sign-in a moment before assuming it's stuck.
+The backend is hosted on Render's free tier, which spins down after 15 minutes of inactivity. The first visit after that takes 30-50 seconds while it wakes; the app starts waking it the moment the page opens and shows a "Waking up the server" screen with progress until it's ready.
 
 ![Kanban board screenshot](docs/kanban-board-screenshot.png)
 
@@ -77,12 +77,12 @@ Sign up with any username/password to get a seeded board, then add cards, drag t
 
 ## Testing
 
-122 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
+130 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
 
 | Layer | Tool | Tests | Covers |
 |---|---|---|---|
-| Unit / integration | pytest (against a real Postgres instance) | 66 | auth, sessions, board CRUD and ownership, the AI proxy contract, rate limiting, chat-history logging, boundary/edge-case validation |
-| Component | Vitest + Testing Library | 39 | sign-in/sign-up flows, board interactions, optimistic save/rollback, serialized saves, multi-board switching, whitespace-input guards |
+| Unit / integration | pytest (against a real Postgres instance) | 67 | auth, sessions, board CRUD and ownership, the AI proxy contract, rate limiting, chat-history logging, boundary/edge-case validation |
+| Component | Vitest + Testing Library | 46 | sign-in/sign-up flows, the cold-start wake-up screen, board interactions, optimistic save/rollback, serialized saves, multi-board switching, whitespace-input guards |
 | End-to-end | Playwright (desktop, iPhone, Android) | 17 | full user journeys in a real browser against a real backend, including mouse and touch drag-and-drop |
 
 ### Testing an AI feature without flaky, expensive, non-deterministic tests

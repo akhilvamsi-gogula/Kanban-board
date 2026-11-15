@@ -31,6 +31,27 @@ async function request<T>(path: string, options?: RequestInit & { parseJson?: bo
   return response.json() as Promise<T>;
 }
 
+// Resolves once the backend answers. Render's free tier sleeps after 15 idle minutes and takes
+// ~30-50s to boot; meanwhile the proxy either holds the request or answers with a 5xx (the local
+// Next.js rewrite returns 500 when nothing is listening; Vercel/Render return 502-504). /api/health
+// does no work and cannot fail by itself, so any 5xx, network error or timeout means "still
+// waking" and is retried. Any other response, even a 404 from an older backend without
+// /api/health, means the server is up. The first request is also what wakes the server, so
+// this is called as soon as the page loads.
+export async function waitForBackend({ timeoutMs = 90_000, attemptTimeoutMs = 10_000, retryDelayMs = 1_500 } = {}): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (true) {
+    try {
+      const response = await fetch(`${API_BASE_URL}/health`, { cache: "no-store", signal: AbortSignal.timeout(attemptTimeoutMs) });
+      if (response.status < 500) return;
+    } catch {
+      // network error or attempt timeout - the server is still starting
+    }
+    if (Date.now() + retryDelayMs >= deadline) throw new Error("The server did not respond in time.");
+    await new Promise((resolve) => setTimeout(resolve, retryDelayMs));
+  }
+}
+
 export type AuthUser = {
   id: string;
   username: string;

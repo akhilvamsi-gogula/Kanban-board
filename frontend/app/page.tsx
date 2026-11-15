@@ -2,14 +2,18 @@
 
 import dynamic from "next/dynamic";
 import { useEffect, useRef, useState } from "react";
-import { createBoard, deleteBoard, fetchBoard, getCurrentUser, listBoards, renameBoard, saveBoard, signOut, toColumns } from "../lib/api";
+import { createBoard, deleteBoard, fetchBoard, getCurrentUser, listBoards, renameBoard, saveBoard, signOut, toColumns, waitForBackend } from "../lib/api";
 import type { BoardSummary, Column } from "../lib/types";
+import { WakeUpScreen } from "../components/wake-up-screen";
+
+const WAKE_SCREEN_DELAY_MS = 2_000;
 
 const Board = dynamic(() => import("../components/board").then((module) => module.Board), { ssr: false });
 const SignIn = dynamic(() => import("../components/sign-in").then((module) => module.SignIn), { ssr: false });
 
 export default function Home() {
-  const [isCheckingSession, setIsCheckingSession] = useState(true);
+  const [startup, setStartup] = useState<{ phase: "checking" | "waking" | "failed" | "ready"; startedAt: number }>({ phase: "checking", startedAt: 0 });
+  const [startAttempt, setStartAttempt] = useState(0);
   const [isSignedIn, setIsSignedIn] = useState(false);
   const [username, setUsername] = useState<string | undefined>(undefined);
   const [boards, setBoards] = useState<BoardSummary[] | null>(null);
@@ -45,22 +49,39 @@ export default function Home() {
     return () => window.removeEventListener("beforeunload", warn);
   }, [isSaving]);
 
+  // Wait for the backend (it may be waking from Render's free-tier sleep), then resolve the
+  // session. The wake-up screen only appears if that takes longer than WAKE_SCREEN_DELAY_MS,
+  // so a warm server never flashes it.
   useEffect(() => {
     let active = true;
-    getCurrentUser()
-      .then((user) => {
-        if (!active) return;
-        setIsSignedIn(user !== null);
-        setUsername(user?.username);
-      })
-      .catch(() => {
-        if (active) setIsSignedIn(false);
-      })
-      .finally(() => {
-        if (active) setIsCheckingSession(false);
-      });
-    return () => { active = false; };
-  }, []);
+    const startedAt = Date.now();
+    const showWakeScreen = setTimeout(() => setStartup({ phase: "waking", startedAt }), WAKE_SCREEN_DELAY_MS);
+    async function start() {
+      try {
+        await waitForBackend();
+      } catch {
+        if (active) setStartup({ phase: "failed", startedAt });
+        return;
+      } finally {
+        clearTimeout(showWakeScreen);
+      }
+      const user = await getCurrentUser().catch(() => null);
+      if (!active) return;
+      setIsSignedIn(user !== null);
+      setUsername(user?.username);
+      setStartup({ phase: "ready", startedAt });
+    }
+    void start();
+    return () => {
+      active = false;
+      clearTimeout(showWakeScreen);
+    };
+  }, [startAttempt]);
+
+  function retryStartup() {
+    setStartup({ phase: "checking", startedAt: 0 });
+    setStartAttempt((attempt) => attempt + 1);
+  }
 
   useEffect(() => {
     if (!isSignedIn) return;
@@ -202,8 +223,11 @@ export default function Home() {
     }
   }
 
-  if (isCheckingSession) {
-    return <main className="state-shell"><p>Loading...</p></main>;
+  if (startup.phase === "checking") {
+    return <main className="state-shell" aria-busy="true" />;
+  }
+  if (startup.phase === "waking" || startup.phase === "failed") {
+    return <WakeUpScreen startedAt={startup.startedAt} failed={startup.phase === "failed"} onRetry={retryStartup} />;
   }
 
   return (
