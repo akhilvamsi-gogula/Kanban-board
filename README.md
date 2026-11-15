@@ -17,7 +17,7 @@ The backend is hosted on Render's free tier, which spins down after inactivity -
 - **Persistent by design** - data lives in Postgres, not the web service's own filesystem, so accounts and boards survive a redeploy or an idle spin-down instead of resetting with the container.
 - **Optimistic UI with race protection** - local edits apply instantly and roll back on a failed save; a save in flight for a board the user has since switched away from is discarded instead of clobbering the newly active board.
 - **AI co-pilot with structured output** - the backend proxies to Groq, validates that every response is well-formed `{assistant_message, board_update?}` JSON before it ever reaches the UI, and retries once on a malformed or incomplete response. `GROQ_API_KEY` never reaches the browser.
-- **Tested across three layers** - FastAPI unit/integration tests, Vitest + Testing Library component tests, and Playwright end-to-end tests (desktop and mobile viewports).
+- **Tested across three layers** - FastAPI unit/integration tests, Vitest + Testing Library component tests, and Playwright end-to-end tests (desktop, iPhone and Android, including real touch drag-and-drop).
 
 ## Architecture
 
@@ -55,7 +55,7 @@ That single prompt touched two different parts of the board (a new card *and* a 
 | Backend | FastAPI, bcrypt, [uv](https://docs.astral.sh/uv/) for dependency management |
 | Database | Postgres 16 - Neon (managed, serverless) in production, the `postgres` Docker Compose service locally |
 | AI | Groq (`openai/gpt-oss-20b`), server-side only, structured-response validation |
-| Testing | pytest, Vitest + Testing Library, Playwright (e2e, multi-viewport) |
+| Testing | pytest, Vitest + Testing Library, Playwright (e2e: desktop, iPhone, Android) |
 | Infra | Docker Compose for local dev, Render (backend hosting) + Neon (database) in production |
 
 ## Quick Start
@@ -77,13 +77,13 @@ Sign up with any username/password to get a seeded board, then add cards, drag t
 
 ## Testing
 
-113 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
+122 automated tests across three layers, all passing, plus a deliberate strategy for testing an AI feature that is non-deterministic by nature.
 
 | Layer | Tool | Tests | Covers |
 |---|---|---|---|
 | Unit / integration | pytest (against a real Postgres instance) | 66 | auth, sessions, board CRUD and ownership, the AI proxy contract, rate limiting, chat-history logging, boundary/edge-case validation |
-| Component | Vitest + Testing Library | 37 | sign-in/sign-up flows, board interactions, optimistic save/rollback, multi-board switching, whitespace-input guards |
-| End-to-end | Playwright (desktop + mobile viewports) | 10 | full user journeys in a real browser against a real backend |
+| Component | Vitest + Testing Library | 39 | sign-in/sign-up flows, board interactions, optimistic save/rollback, serialized saves, multi-board switching, whitespace-input guards |
+| End-to-end | Playwright (desktop, iPhone, Android) | 17 | full user journeys in a real browser against a real backend, including mouse and touch drag-and-drop |
 
 ### Testing an AI feature without flaky, expensive, non-deterministic tests
 

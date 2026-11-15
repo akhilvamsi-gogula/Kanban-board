@@ -21,10 +21,29 @@ export default function Home() {
   const [saveError, setSaveError] = useState<{ boardId: string; next: Column[]; previous: Column[] } | null>(null);
   const [boardActionError, setBoardActionError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
-  // persistBoard needs the board that is active when its PUT *resolves*, not the one
+  // flushSaves needs the board that is active when its PUT *resolves*, not the one
   // captured in the closure when it started, to detect a save it should discard.
   const activeBoardIdRef = useRef(activeBoardId);
   useEffect(() => { activeBoardIdRef.current = activeBoardId; }, [activeBoardId]);
+  // The board name is read synchronously right after an AI update renames it (before React
+  // re-renders), so it lives in a ref as well as in state.
+  const boardNameRef = useRef(boardName);
+  // Saves run one at a time: each PUT replaces the whole board, so two in flight at once can
+  // land out of order and the older one would overwrite the newer edit. While one is in
+  // flight only the latest requested state is kept, and a response is applied only if no
+  // newer edit was made since it was sent.
+  const saveQueueRef = useRef<{ boardId: string; name: string; next: Column[]; previous: Column[]; seq: number } | null>(null);
+  const saveInFlightRef = useRef(false);
+  const latestSaveSeqRef = useRef(0);
+
+  // Leaving while a save is queued or in flight would drop the latest edit, so ask the
+  // browser to show its standard "changes may not be saved" prompt until it lands.
+  useEffect(() => {
+    if (!isSaving) return;
+    const warn = (event: BeforeUnloadEvent) => event.preventDefault();
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [isSaving]);
 
   useEffect(() => {
     let active = true;
@@ -65,7 +84,7 @@ export default function Home() {
       .then((board) => {
         if (!active) return;
         setOwnerId(board.owner_id);
-        setBoardName(board.name);
+        changeBoardName(board.name);
         setColumns(toColumns(board));
       })
       .catch((error: Error) => {
@@ -74,28 +93,47 @@ export default function Home() {
     return () => { active = false; };
   }, [activeBoardId]);
 
-  async function persistBoard(nextColumns: Column[], previousColumns: Column[]) {
+  function changeBoardName(name: string) {
+    boardNameRef.current = name;
+    setBoardName(name);
+  }
+
+  function persistBoard(nextColumns: Column[], previousColumns: Column[]) {
     const boardId = activeBoardId;
     if (!boardId) return;
     setColumns(nextColumns);
     setSaveError(null);
+    latestSaveSeqRef.current += 1;
+    saveQueueRef.current = { boardId, name: boardNameRef.current, next: nextColumns, previous: previousColumns, seq: latestSaveSeqRef.current };
+    if (!saveInFlightRef.current) void flushSaves();
+  }
+
+  async function flushSaves() {
+    saveInFlightRef.current = true;
     setIsSaving(true);
-    try {
-      const board = await saveBoard(boardId, boardName, nextColumns);
-      if (boardId !== activeBoardIdRef.current) return;
-      setBoardName(board.name);
-      setColumns(toColumns(board));
-    } catch {
-      if (boardId !== activeBoardIdRef.current) return;
-      setColumns(previousColumns);
-      setSaveError({ boardId, next: nextColumns, previous: previousColumns });
-    } finally {
-      setIsSaving(false);
+    while (saveQueueRef.current) {
+      const job = saveQueueRef.current;
+      saveQueueRef.current = null;
+      const isStillCurrent = () => job.boardId === activeBoardIdRef.current && job.seq === latestSaveSeqRef.current;
+      try {
+        const board = await saveBoard(job.boardId, job.name, job.next);
+        if (isStillCurrent()) {
+          changeBoardName(board.name);
+          setColumns(toColumns(board));
+        }
+      } catch {
+        if (isStillCurrent()) {
+          setColumns(job.previous);
+          setSaveError({ boardId: job.boardId, next: job.next, previous: job.previous });
+        }
+      }
     }
+    saveInFlightRef.current = false;
+    setIsSaving(false);
   }
 
   function retrySave() {
-    if (saveError) void persistBoard(saveError.next, saveError.previous);
+    if (saveError) persistBoard(saveError.next, saveError.previous);
   }
 
   function switchBoard(boardId: string) {
@@ -135,7 +173,7 @@ export default function Home() {
     return runBoardAction("Could not rename board.", async () => {
       const board = await renameBoard(boardId, name);
       setBoards((current) => (current ?? []).map((item) => (item.id === boardId ? { ...item, name: board.name } : item)));
-      if (boardId === activeBoardId) setBoardName(board.name);
+      if (boardId === activeBoardId) changeBoardName(board.name);
     });
   }
 
@@ -178,8 +216,8 @@ export default function Home() {
         ownerId={ownerId}
         username={username}
         columns={columns ?? undefined}
-        onColumnsChange={(next, previous) => void persistBoard(next, previous)}
-        onBoardNameChange={setBoardName}
+        onColumnsChange={persistBoard}
+        onBoardNameChange={changeBoardName}
         onLogout={() => void handleLogout()}
         switcher={boards ? {
           boards,
