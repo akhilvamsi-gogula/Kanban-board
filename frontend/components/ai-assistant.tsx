@@ -10,15 +10,42 @@ import {
   toApiColumns,
   toColumns,
   uploadAttachment,
+  type AiBoardUpdate,
   type AiMessage,
   type AttachmentText,
+  type BoardChange,
 } from "../lib/api";
 import type { Column } from "../lib/types";
 
 const UNDO_REQUEST_PATTERN = /\bundo\b/i;
 const HISTORY_SENT = 8;
+type ProposalStatus = "pending" | "applied" | "discarded";
 
-type ChatEntry = AiMessage & { attachments?: string[] };
+// Shown instead of the model's own words when an update removes cards: the model's text would
+// describe the removal as done, but nothing changes until Apply.
+const PROPOSAL_MESSAGE: Record<ProposalStatus, string> = {
+  pending: "I can make the changes below. Nothing has changed yet.",
+  applied: "Applied the changes below.",
+  discarded: "Discarded the changes below. The board was not changed.",
+};
+const CHANGES_LABEL: Record<ProposalStatus, string> = { pending: "Proposed changes", applied: "Changes made", discarded: "Not applied" };
+
+// The backend words each change as done ("Removed ..."); one that was not made reads as an action.
+const PLANNED_VERB: Record<string, string> = { Added: "Add", Moved: "Move", Removed: "Remove", Renamed: "Rename", Reordered: "Reorder", Updated: "Update" };
+
+// "proposal" is set on a reply whose update removes cards and so waits for Apply.
+type ChatEntry = AiMessage & { attachments?: string[]; changes?: BoardChange[]; proposal?: ProposalStatus };
+
+function changeText(change: BoardChange, status: ProposalStatus): string {
+  return status === "applied" ? change.text : change.text.replace(/^\w+/, (verb) => PLANNED_VERB[verb] ?? verb);
+}
+
+// The model sees what each change actually did, not only how its earlier reply described it.
+function historyContent(entry: ChatEntry): string {
+  if (!entry.changes?.length) return entry.content;
+  const status = entry.proposal ?? "applied";
+  return `${entry.content}\n${CHANGES_LABEL[status]}:\n${entry.changes.map((change) => `- ${changeText(change, status)}`).join("\n")}`;
+}
 
 type PendingAttachment = {
   id: string;
@@ -56,14 +83,38 @@ export function AiAssistant({ isOpen, onClose, boardId, ownerId, boardName, colu
     { role: "assistant", content: "Ask me to rename a column, add a task, or update the board. You can also attach a document and ask me to turn it into cards." },
   ]);
   const [snapshot, setSnapshot] = useState<{ columns: Column[]; boardName: string } | null>(null);
+  // An update that removes cards, held until Apply; `base` is the board it was made from.
+  const [proposal, setProposal] = useState<{ update: AiBoardUpdate; base: string } | null>(null);
   const [attachments, setAttachments] = useState<PendingAttachment[]>([]);
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const isUploading = attachments.some((attachment) => attachment.status === "uploading");
+  const boardKey = JSON.stringify({ name: boardName, columns: toApiColumns(columns) });
 
   function reply(content: string) {
     setMessages((current) => [...current, { role: "assistant", content }]);
+  }
+
+  // The proposal's own message is reworded to say what happened; `note` adds a line after it.
+  function closeProposal(status: "applied" | "discarded", note?: string) {
+    setProposal(null);
+    setMessages((current) => [
+      ...current.map((entry) => (entry.proposal === "pending" ? { ...entry, content: PROPOSAL_MESSAGE[status], proposal: status } : entry)),
+      ...(note ? [{ role: "assistant" as const, content: note }] : []),
+    ]);
+  }
+
+  function applyProposal() {
+    if (!proposal) return;
+    // The proposal replaces the whole board, so applying it over later edits would undo them.
+    if (proposal.base !== boardKey) {
+      closeProposal("discarded", "The board changed after this suggestion, so nothing was applied. Ask again for an up-to-date suggestion.");
+      return;
+    }
+    setSnapshot({ columns, boardName });
+    onApplyBoard(toColumns(proposal.update), proposal.update.name);
+    closeProposal("applied");
   }
 
   function updateAttachment(id: string, changes: Partial<PendingAttachment>) {
@@ -118,7 +169,7 @@ export function AiAssistant({ isOpen, onClose, boardId, ownerId, boardName, colu
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const prompt = draft.trim();
-    if (!prompt || isLoading || isUploading) return;
+    if (!prompt || isLoading || isUploading || proposal) return;
 
     const ready = attachments.flatMap((attachment) => (attachment.status === "ready" && attachment.result ? [attachment.result] : []));
     setMessages((current) => [...current, { role: "user", content: prompt, attachments: ready.map((attachment) => attachment.name) }]);
@@ -142,13 +193,19 @@ export function AiAssistant({ isOpen, onClose, boardId, ownerId, boardName, colu
     try {
       const board = { id: boardId, owner_id: ownerId, name: boardName, columns: toApiColumns(columns) };
       // Attachments go with this message only; history carries just the text of earlier turns.
-      const history = messages.slice(-HISTORY_SENT).map(({ role, content }) => ({ role, content }));
+      const history = messages.slice(-HISTORY_SENT).map((entry) => ({ role: entry.role, content: historyContent(entry) }));
       const response = await askBoardAssistant(prompt, board, history, ready);
-      reply(response.assistant_message);
       setAttachments([]);
-      if (response.board_update) {
-        setSnapshot({ columns, boardName });
-        onApplyBoard(toColumns(response.board_update), response.board_update.name);
+      const changes = response.changes ?? [];
+      if (response.board_update && changes.some((change) => change.kind === "card_removed")) {
+        setProposal({ update: response.board_update, base: boardKey });
+        setMessages((current) => [...current, { role: "assistant", content: PROPOSAL_MESSAGE.pending, changes, proposal: "pending" }]);
+      } else {
+        setMessages((current) => [...current, { role: "assistant", content: response.assistant_message, changes }]);
+        if (response.board_update) {
+          setSnapshot({ columns, boardName });
+          onApplyBoard(toColumns(response.board_update), response.board_update.name);
+        }
       }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "The assistant could not answer right now.");
@@ -191,10 +248,31 @@ export function AiAssistant({ isOpen, onClose, boardId, ownerId, boardName, colu
               {message.attachments && message.attachments.length > 0 && (
                 <p className="ai-message-files"><Paperclip size={12} /> {message.attachments.join(", ")}</p>
               )}
+              {message.changes && message.changes.length > 0 && (
+                <div className={`ai-changes ai-changes-${message.proposal ?? "applied"}`}>
+                  <span className="ai-changes-label">{CHANGES_LABEL[message.proposal ?? "applied"]}</span>
+                  <ul aria-label={CHANGES_LABEL[message.proposal ?? "applied"]}>
+                    {message.changes.map((change, changeIndex) => (
+                      <li key={changeIndex} className={`ai-change-${change.kind}`}>{changeText(change, message.proposal ?? "applied")}</li>
+                    ))}
+                  </ul>
+                  {message.proposal === "pending" && (
+                    <div className="ai-proposal-actions">
+                      <button type="button" className="button button-quiet button-small" onClick={() => closeProposal("discarded")}>
+                        Discard
+                      </button>
+                      <button type="button" className="button button-primary button-small" onClick={applyProposal}>
+                        Apply
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
         {error && <p className="ai-error">{error}</p>}
+        {proposal && <p className="ai-attachments-note">Apply or discard the proposed changes before sending another message.</p>}
         <form className="ai-composer" onSubmit={handleSubmit}>
           {attachments.length > 0 && (
             <ul className="ai-attachments" aria-label="Attached files">
@@ -254,7 +332,7 @@ export function AiAssistant({ isOpen, onClose, boardId, ownerId, boardName, colu
             <button type="button" className="button button-quiet button-small" onClick={() => setDraft("")} disabled={isLoading}>
               Clear
             </button>
-            <button type="submit" className="button button-primary button-small" disabled={isLoading || isUploading}>
+            <button type="submit" className="button button-primary button-small" disabled={isLoading || isUploading || proposal !== null}>
               {isLoading ? "Thinking..." : <><Send size={14} /> Send</>}
             </button>
           </div>

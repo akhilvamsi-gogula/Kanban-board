@@ -167,9 +167,17 @@ export type AiBoardUpdate = {
   columns: ApiColumn[];
 };
 
+// One line of what an AI update changes, computed by the backend from the before and after
+// boards, not written by the model.
+export type BoardChange = {
+  kind: "board_renamed" | "column_renamed" | "card_added" | "card_removed" | "card_moved" | "card_renamed" | "card_details_changed" | "cards_reordered";
+  text: string;
+};
+
 export type AiChatResponse = {
   assistant_message: string;
-  board_update?: AiBoardUpdate;
+  board_update?: AiBoardUpdate | null;
+  changes?: BoardChange[];
 };
 
 // Text the backend extracted from one attached file; nothing is stored server-side.

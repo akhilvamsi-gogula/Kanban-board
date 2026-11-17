@@ -6,11 +6,11 @@ How the app is tested, on which devices, what the edge and boundary cases are, a
 
 | Layer | Tool | Count | Runs in CI |
 |---|---|---|---|
-| Backend unit and integration | pytest against a real Postgres | 134 tests | yes |
-| Frontend unit and component | Vitest + Testing Library (jsdom) | 75 tests in 6 files | yes |
+| Backend unit and integration | pytest against a real Postgres | 145 tests | yes |
+| Frontend unit and component | Vitest + Testing Library (jsdom) | 79 tests in 6 files | yes |
 | End-to-end | Playwright, real browsers against a real backend and database | 13 scenarios x 4 device profiles = 52 runs (48 run, 4 skipped by design) | no |
 | Load (concurrent users) | `backend/scripts/load_check.py` | 5 and 25 simultaneous users | no |
-| AI behavior | `backend/eval/ai_eval.py` against the real Groq model | 7 cases | no |
+| AI behavior | `backend/eval/ai_eval.py` against the real Groq model | 10 cases | no |
 | Real device | manual, Galaxy S24 Ultra | checklist below | no |
 
 CI (`.github/workflows/ci.yml`) runs the backend suite against a Postgres service container, plus frontend lint, type check, Vitest and build, on every pull request and every push to `main`. Playwright, the load check and the AI eval are run by hand: they need browser binaries, a running backend and database, or Groq quota.
@@ -97,6 +97,7 @@ Other cases with tests:
 - **Failed save.** The board rolls back to its previous state and shows a Retry banner.
 - **Switching boards mid-save.** A slow save for the previous board does not overwrite the board now on screen.
 - **AI replies.** Malformed JSON, a claimed change with no `board_update`, a wrong field name, a partial update, an update that names an unknown column, a Groq timeout and a Groq 429 each have a test. All AI tests mock the Groq HTTP call, so they are fast, free and deterministic.
+- **AI guardrails.** Each kind of change in the change list; a no-op update dropped, and retried if the reply claims a change; a card id in a reply retried, then replaced by the title. In the UI: the change list; a removal waiting for Apply; Discard; Apply refused after a manual edit; undo after Apply.
 - **Cold start.** The wake-up screen stays hidden for a fast backend, appears after 2 seconds for a slow one, and shows an error with Try again after 90 seconds.
 - **Long text on a phone.** See end-to-end scenario 8.
 - **In-between widths.** See end-to-end scenario 7.
@@ -138,7 +139,7 @@ Backend tests need Postgres on `localhost:5432` (`docker compose up -d postgres`
 
 ```bash
 cd backend
-uv run pytest -q                                   # all 134
+uv run pytest -q                                   # all 145
 uv run pytest -q tests/test_main.py::test_name     # one test
 
 cd frontend
