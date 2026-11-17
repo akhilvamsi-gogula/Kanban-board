@@ -87,4 +87,14 @@ button { cursor: pointer; }
 .ai-attachment-uploading .ai-attachment-status { color: var(--yellow); }
 .ai-attachment-error { border-color: rgba(255,135,145,.5); }
 .ai-attachment-error .ai-attachment-status { color: #ff9aa4; white-space: normal; }
+/* AI co-pilot change list (computed by the backend) and removal proposals */
+.ai-changes { margin-top: 10px; padding: 9px 10px; border: 1px solid #314f69; border-radius: 6px; background: #0f2438; }
+.ai-changes-pending { border-color: rgba(245,189,39,.5); }
+.ai-changes-discarded { opacity: .65; }
+.ai-changes-label { display: block; margin-bottom: 4px; color: var(--muted); font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.ai-changes-pending .ai-changes-label { color: var(--yellow); }
+.ai-changes ul { display: grid; gap: 3px; margin: 0; padding-left: 16px; color: #c7d5e8; font-size: 12px; line-height: 1.45; overflow-wrap: anywhere; }
+.ai-changes .ai-change-card_removed { color: #ff9aa4; }
+.ai-changes-discarded ul { text-decoration: line-through; }
+.ai-proposal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
 .ai-message p.ai-message-files { display: flex; align-items: center; gap: 5px; margin-top: 6px; color: var(--muted); font-size: 11px; }

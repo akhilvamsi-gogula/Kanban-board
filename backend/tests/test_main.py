@@ -11,8 +11,9 @@ from fastapi.testclient import TestClient
 from psycopg import sql
 
 from app import rate_limit
+from app.ai_service import SYSTEM_PROMPT, describe_changes, replace_card_ids
 from app.main import app
-from app.models import AiChatRequest
+from app.models import AiChatRequest, BoardUpdate
 from app.repository import KanbanRepository
 
 
@@ -832,6 +833,8 @@ def test_ai_chat_sends_compact_json_board_and_returns_merged_full_board(groq_key
     assert request["headers"]["Authorization"] == "Bearer test-key"
     payload = request["json"]
     assert payload["model"] == "openai/gpt-oss-20b"
+    # Medium matched "all cards with ..." requests far more reliably than low (PLAN.md Part 22).
+    assert payload["reasoning_effort"] == "medium"
     assert payload["messages"][0]["content"].startswith("You are a Kanban assistant")
     board_message = payload["messages"][-1]["content"]
     assert board_message.startswith("Current board JSON: {")
@@ -999,6 +1002,148 @@ def test_ai_chat_merge_orders_cards_by_position_and_can_rename_the_board(groq_ke
     assert update["name"] == "Launch"
     assert [card["id"] for card in update["columns"][1]["cards"]] == ["first", "second"]
     assert [card["position"] for card in update["columns"][1]["cards"]] == [0, 1]
+
+
+COLUMN_IDS = [("backlog", "Backlog"), ("up-next", "Up next"), ("in-progress", "In progress"), ("review", "Review"), ("done", "Done")]
+
+
+def _board(name: str = "My board", names: dict[str, str] | None = None, **cards: list[tuple[str, str] | tuple[str, str, str]]) -> BoardUpdate:
+    """A five-column board; keyword arguments give a column's cards as (id, title[, details])."""
+    return BoardUpdate(name=name, columns=[
+        {
+            "id": column_id,
+            "name": (names or {}).get(column_id, column_name),
+            "accent": "#8b95a5",
+            "position": position,
+            "cards": [
+                {"id": card[0], "title": card[1], "details": card[2] if len(card) > 2 else "", "position": index}
+                for index, card in enumerate(cards.get(column_id.replace("-", "_"), []))
+            ],
+        }
+        for position, (column_id, column_name) in enumerate(COLUMN_IDS)
+    ])
+
+
+def _change_texts(before: BoardUpdate, after: BoardUpdate) -> list[tuple[str, str]]:
+    return [(change.kind, change.text) for change in describe_changes(before, after)]
+
+
+def test_describe_changes_lists_each_kind_of_change_by_title_and_column_name() -> None:
+    before = _board(backlog=[("a1", "Write docs"), ("b2", "Fix bug", "old"), ("c3", "Old title")], done=[("d4", "Ship it")])
+    after = _board(
+        name="Launch",
+        names={"review": "QA"},
+        backlog=[("b2", "Fix bug", "new details"), ("c3", "New title")],
+        review=[("a1", "Write docs")],
+        up_next=[("e5", "Plan sprint 2")],
+    )
+
+    assert _change_texts(before, after) == [
+        ("board_renamed", 'Renamed the board to "Launch"'),
+        ("column_renamed", 'Renamed column "Review" to "QA"'),
+        ("card_removed", 'Removed "Ship it" from Done'),
+        ("card_details_changed", 'Updated the details of "Fix bug"'),
+        ("card_renamed", 'Renamed card "Old title" to "New title"'),
+        ("card_added", 'Added "Plan sprint 2" to Up next'),
+        ("card_moved", 'Moved "Write docs" from Backlog to QA'),
+    ]
+
+
+def test_describe_changes_reports_a_reorder_only_when_cards_that_stayed_change_order() -> None:
+    before = _board(backlog=[("a1", "A"), ("b2", "B"), ("c3", "C")])
+
+    # Removing one card and adding another is not a reorder of the cards that stayed.
+    assert [kind for kind, _ in _change_texts(before, _board(backlog=[("a1", "A"), ("n1", "New"), ("c3", "C")]))] == ["card_removed", "card_added"]
+    assert _change_texts(before, _board(backlog=[("c3", "C"), ("a1", "A"), ("b2", "B")])) == [("cards_reordered", "Reordered cards in Backlog")]
+    assert _change_texts(before, before) == []
+
+
+def test_ai_chat_returns_the_server_computed_change_list(groq_key, monkeypatch) -> None:
+    _fake_groq(monkeypatch, _reply("Added it.", '{"columns": [{"id": "up-next", "cards": [{"id": "n1", "title": "Write release notes", "details": ""}]}]}'))
+    board = _signed_in_board()
+
+    body = _chat(board, prompt="add a card").json()
+
+    assert body["changes"] == [{"kind": "card_added", "text": 'Added "Write release notes" to Up next'}]
+
+
+def test_ai_chat_drops_a_board_update_that_changes_nothing(groq_key, monkeypatch) -> None:
+    board = _signed_in_board()
+    unchanged = json.dumps({"columns": [{"id": column["id"], "name": column["name"]} for column in board["columns"]]})
+    calls = _fake_groq(monkeypatch, _reply("Here is your board.", unchanged))
+
+    body = _chat(board, prompt="show me the board").json()
+
+    assert body["board_update"] is None and body["changes"] == []
+    assert calls["n"] == 1
+
+
+def test_ai_chat_retries_when_a_claimed_change_is_a_no_op_update(groq_key, monkeypatch) -> None:
+    board = _signed_in_board()
+    unchanged = json.dumps({"columns": [{"id": "backlog", "name": board["columns"][0]["name"]}]})
+    calls = _fake_groq(
+        monkeypatch,
+        _reply("Renamed the Backlog column.", unchanged),
+        _reply("Renamed the Backlog column.", '{"columns": [{"id": "backlog", "name": "Ideas"}]}'),
+    )
+
+    body = _chat(board, prompt="rename backlog to ideas").json()
+
+    assert body["changes"] == [{"kind": "column_renamed", "text": 'Renamed column "Backlog" to "Ideas"'}]
+    assert calls["n"] == 2
+
+
+def _board_with_card(card_id: str, title: str) -> dict:
+    board = _signed_in_board()
+    board["columns"][0]["cards"] = [{"id": card_id, "title": title, "details": "", "position": 0}]
+    assert client.put(f"/api/boards/{board['id']}", json={"name": board["name"], "columns": board["columns"]}).status_code == 200
+    return board
+
+
+def test_ai_chat_retries_a_reply_that_shows_the_user_a_card_id(groq_key, monkeypatch) -> None:
+    board = _board_with_card("c2", "Write onboarding docs")
+    calls = _fake_groq(monkeypatch, _reply('The card ids are: c2.'), _reply('There is one card: "Write onboarding docs".'))
+
+    body = _chat(board, prompt="list the card ids").json()
+
+    assert body["assistant_message"] == 'There is one card: "Write onboarding docs".'
+    assert calls["n"] == 2
+
+
+def test_ai_chat_ignores_an_id_that_is_part_of_the_card_title(groq_key, monkeypatch) -> None:
+    board = _board_with_card("login", "Fix login")
+    calls = _fake_groq(monkeypatch, _reply('"Fix login" is about the login page.'))
+
+    assert _chat(board).status_code == 200
+    assert calls["n"] == 1
+
+
+@pytest.mark.parametrize("second", [_reply("The card id is c2."), "[not valid json"])
+def test_ai_chat_shows_titles_in_place_of_ids_when_the_retry_does_not_do_better(groq_key, monkeypatch, second: str) -> None:
+    # A usable reply beats an error, but the id itself must never reach the user.
+    board = _board_with_card("c2", "Write onboarding docs")
+    calls = _fake_groq(monkeypatch, _reply("The card id is c2."), second)
+
+    response = _chat(board)
+
+    assert response.status_code == 200
+    assert response.json()["assistant_message"] == 'The card id is "Write onboarding docs".'
+    assert calls["n"] == 2
+
+
+def test_replace_card_ids_handles_quotes_and_does_not_touch_longer_ids_or_words() -> None:
+    board = _board(backlog=[("c1", "Plan sprint"), ("c12", "Update pricing"), ("login", "Fix login")])
+
+    message = replace_card_ids('Ids: "c1", `c12` and c1. Not c123, abc1 or the login page.', [board])
+
+    assert message == 'Ids: "Plan sprint", "Update pricing" and "Plan sprint". Not c123, abc1 or the login page.'
+
+
+def test_ai_system_prompt_forbids_ids_and_guessing() -> None:
+    prompt = SYSTEM_PROMPT.lower()
+    assert "never mention an id" in prompt
+    assert "never guess" in prompt
+    assert "titles and details only" in prompt
 
 
 def test_ai_chat_reports_shared_quota_with_retry_after_on_groq_429(groq_key, monkeypatch) -> None:

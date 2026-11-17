@@ -704,6 +704,50 @@ Done on the review branch (same pull request as Part 19), before Part 20.
 - Touch drag on a real iPhone (Playwright cannot script real touch input in WebKit).
 - The load check against the deployed app (it creates real accounts).
 
+## Part 22: AI Co-Pilot Guardrails
+
+Reported in production: "remove all cards with number 2" deleted the card whose internal id was `c2`, replied "I removed the card with id "c2"", and a follow-up got a list of raw ids. The model guessed instead of asking, matched on ids the user never sees, and described the change in ids. Prompt wording alone cannot make a 20B model reliable, so the fix pairs a clearer prompt with checks in code that do not depend on the model.
+
+### Checklist
+
+- [x] Baseline: new eval cases run against the current prompt, to confirm they catch the reported behaviour.
+- [x] Prompt: ids are internal and never shown; refer to cards by title and columns by name; match requests against titles and details only, checking every card when a request covers several; if a request is ambiguous or matches nothing, ask and make no change; if it is clear, make the change without asking first (the app confirms removals itself); answer questions only from the board; professional, concise, no emojis.
+- [x] `describe_changes(before, after)` in `ai_service.py`: the server computes the change list from the two boards (board/column renamed, card added, removed, moved, renamed, details edited, cards reordered). Returned as `changes: [{kind, text}]` on `AiChatResponse`.
+- [x] Guardrail: a `board_update` that changes nothing is dropped; if the message then claims a change, it is a failed attempt (retry).
+- [x] Guardrail: a reply that mentions a card id (one not part of that card's title) is retried once. If the retry fails or still mentions one, `replace_card_ids` shows each id as the card's quoted title, so an id never reaches the user.
+- [x] Chat `reasoning_effort` raised from `"low"` to `"medium"` (user's choice, see decisions).
+- [x] Frontend: the change list is shown under the assistant's reply.
+- [x] Frontend: an update that removes any card is a proposal, with Apply / Discard. Nothing changes until Apply. The panel shows its own text instead of the model's, and rewords that same message on Apply or Discard: "I can make the changes below. Nothing has changed yet." with the list as actions ("Remove ..."); then "Applied the changes below." with the list as done ("Removed ..."), or "Discarded the changes below. The board was not changed." Apply is refused if the board changed since the proposal. Sending is blocked while a proposal is pending. The history sent to the model carries each change list and whether it was applied. Undo covers an applied proposal.
+- [x] Eval: cases `ambiguous_number_not_id` (the reported case; removing must match exactly the cards with a 2 in the title), `ids_not_shown`, `no_match_asks`; every case also fails if the reply shows a card id or asks to confirm a change that applies at once; each case saves its own board; waits out 429s; `--only` and `--repeat`.
+- [x] Docs: `docs/architecture.md` (AI section), `docs/deployment.md` (`reasoning_effort`), `docs/testing.md`, README (feature line, AI testing, defects table, counts), `backend/eval/README.md`.
+- [x] New `docs/local-setup-windows.md` (asked for while testing locally: running the app on Windows without Docker was not written down), linked from the README quick start and `docs/deployment.md`. `.env.example` now sets `DATABASE_URL` (local, without Docker; Compose overrides it) and `KANBAN_AUTH_RATE_LIMIT=1000`, with its comments shortened.
+
+### Tests and success criteria
+
+- [x] Backend: each change kind in `describe_changes`, and reorders only for cards that stayed; `changes` in the chat response; a no-op update is dropped; a no-op update with a claimed change is retried; an id mention is retried; an id that is part of its title is ignored; titles replace ids when the retry also mentions one or fails; quotes, longer ids and ordinary words handled; the prompt states the new rules; the chat call sends `reasoning_effort: "medium"`.
+- [x] Frontend: change list rendered; removal not applied until Apply, with the app's text instead of the model's; Send blocked while pending; Discard keeps the board and the next request's history says it was not applied; Apply refused after a manual board edit; undo after Apply.
+- [x] `ai_eval.py`: the new cases fail on the old prompt (baseline) and pass after the change; the existing 7 cases still pass.
+- [x] Full validation from CLAUDE.md.
+
+### Part 22 validation record
+
+- [x] Baseline, old prompt: 8/10. `ambiguous_number_not_id` removed "Write onboarding docs" (id `c2`), exactly the reported bug; `ids_not_shown` replied "The card ids are: c1, c2, c3, c12, c13."
+- [x] First prompt draft told the model to word removals as proposals; it then proposed in words without a `board_update`, leaving nothing for Apply. Replaced by the app showing its own proposal text, so the model needs no knowledge of confirmation.
+- [x] Live browser check (desktop and Pixel 7 emulation, real Groq) at `"low"`: each run proposed removing only one of the two matching cards, and on the phone an id list still reached the screen after the retry. That led to `replace_card_ids` and the "check every card" rule.
+- [x] `ambiguous_number_not_id --repeat 5`: `"low"` 3/5 (one partial match, one 502); `"medium"` 5/5. Full eval at `"medium"`: run 1 9/10 (that case removed one of the two cards), run 2 10/10.
+- [x] Cost measured directly against Groq for the reported prompt, 3 calls each: `"low"` 1,026-1,038 tokens, 0.4-0.5 s; `"medium"` 1,302-1,787 tokens, 0.9-1.3 s. On the shared 8,000 tokens/min free tier that is roughly 4-6 AI requests a minute app-wide instead of 7-8.
+- [x] Live browser check at `"medium"`, desktop and Pixel 7: both proposed removing exactly "Plan sprint 2" and "Release 2.0 checklist", the board was unchanged until Apply, "Write onboarding docs" was kept, and asking for ids got titles. Screenshots showed a closed proposal still reading "Nothing has changed yet" above "Changes made".
+- [x] Manual test by the user: an applied removal read "Proposed the changes below." above "Changes made: Removed ...", which was unclear, and a pending one already listed "Removed ..." before anything was removed. Each state now has its own wording (see the checklist), and the separate "Applied the changes." line was dropped.
+- [x] `uv run python -m pytest -q`: 145 passed (134 + 11). `npm run lint`, `npx tsc --noEmit`, `npm run build` pass. `npm run test -- --run`: 6 files, 79 tests (75 + 4). `npm run test:e2e`: 48 passed, 4 skipped by design.
+
+### Part 22 decisions
+
+- Confirmation is required for removals only (user's choice). Adds, renames and moves apply immediately and can be undone.
+- The change list is computed by the server from the before and after boards, not written by the model, and is shown under the model's reply (user's choice). For a removal proposal the app's own text replaces the model's, because the model's text would describe the removal as already done.
+- Chat runs at `reasoning_effort: "medium"` (user's choice, from the measurements above): more accurate matching, at the cost of fewer AI requests per minute on the free tier. The connectivity check stays at `"low"`.
+- An id-mentioning reply is repaired rather than refused: a usable answer with titles in place of ids is better than an error.
+- Free-text answers to questions (for example a card count) cannot be checked in code; the prompt and the eval cover them. Partial matches can still happen; the change list and Apply make them visible before anything is removed.
+
 ## Future Scope
 
 - In-app OneDrive / Google Drive upload (picker SDK + OAuth app registration) - not needed on Android, where the system picker already reaches both.

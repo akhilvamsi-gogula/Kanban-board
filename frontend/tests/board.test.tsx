@@ -350,4 +350,127 @@ describe("Board", () => {
       expect(fetchMock).not.toHaveBeenCalled();
     });
   });
+
+  describe("AI guardrails", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+    });
+
+    // The seeded board as the API would return it, with the given Backlog card ids removed.
+    function boardWithout(...removedIds: string[]) {
+      return {
+        name: "Q3 product launch",
+        columns: initialColumns.map((column, index) => ({
+          id: column.id,
+          name: column.name,
+          accent: column.accent,
+          position: index,
+          cards: column.cards.filter((card) => !removedIds.includes(card.id)).map((card, position) => ({ ...card, position })),
+        })),
+      };
+    }
+
+    function stubChat(body: object) {
+      const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => body });
+      vi.stubGlobal("fetch", fetchMock);
+      return fetchMock;
+    }
+
+    const removal = {
+      assistant_message: 'Removed "Map the user journey".',
+      board_update: boardWithout("map-user-journey"),
+      changes: [{ kind: "card_removed", text: 'Removed "Map the user journey" from Backlog' }],
+    };
+
+    async function ask(user: ReturnType<typeof userEvent.setup>, prompt: string) {
+      await user.type(screen.getByLabelText("Ask the board assistant"), prompt);
+      await user.click(screen.getByRole("button", { name: "Send" }));
+    }
+
+    const backlog = () => within(screen.getByRole("region", { name: "Backlog" }));
+
+    it("shows the change list from the server under a reply that changes the board", async () => {
+      const user = userEvent.setup();
+      stubChat({
+        assistant_message: "Renamed the column.",
+        board_update: { ...boardWithout(), columns: boardWithout().columns.map((column) => (column.id === "backlog" ? { ...column, name: "Ideas" } : column)) },
+        changes: [{ kind: "column_renamed", text: 'Renamed column "Backlog" to "Ideas"' }],
+      });
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+      await ask(user, "rename backlog to ideas");
+
+      const list = await screen.findByRole("list", { name: "Changes made" });
+      expect(within(list).getByText('Renamed column "Backlog" to "Ideas"')).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Ideas" })).toBeInTheDocument();
+    });
+
+    it("holds a removal until Apply, shows its own text instead of the model's, and can undo it", async () => {
+      const user = userEvent.setup();
+      stubChat(removal);
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+      await ask(user, "remove the journey card");
+
+      // Nothing has happened yet, so neither the message nor the list may say "Removed".
+      expect(await screen.findByText("I can make the changes below. Nothing has changed yet.")).toBeInTheDocument();
+      expect(screen.queryByText('Removed "Map the user journey".')).not.toBeInTheDocument();
+      expect(within(screen.getByRole("list", { name: "Proposed changes" })).getByText('Remove "Map the user journey" from Backlog')).toBeInTheDocument();
+      expect(backlog().getByText("Map the user journey")).toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+
+      // The same message now says it was applied, with the list in the past tense.
+      expect(backlog().queryByText("Map the user journey")).not.toBeInTheDocument();
+      expect(screen.getByText("Applied the changes below.")).toBeInTheDocument();
+      expect(screen.queryByText(/Nothing has changed yet/)).not.toBeInTheDocument();
+      expect(within(screen.getByRole("list", { name: "Changes made" })).getByText('Removed "Map the user journey" from Backlog')).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Apply" })).not.toBeInTheDocument();
+
+      await ask(user, "undo");
+      expect(backlog().getByText("Map the user journey")).toBeInTheDocument();
+    });
+
+    it("leaves the board unchanged when a removal is discarded, and tells the model on the next turn", async () => {
+      const user = userEvent.setup();
+      const fetchMock = stubChat(removal);
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+      await ask(user, "remove the journey card");
+      await user.click(await screen.findByRole("button", { name: "Discard" }));
+
+      expect(backlog().getByText("Map the user journey")).toBeInTheDocument();
+      expect(screen.getByText("Discarded the changes below. The board was not changed.")).toBeInTheDocument();
+      expect(within(screen.getByRole("list", { name: "Not applied" })).getByText('Remove "Map the user journey" from Backlog')).toBeInTheDocument();
+
+      fetchMock.mockResolvedValue({ ok: true, json: async () => ({ assistant_message: "Understood." }) });
+      await ask(user, "thanks");
+      await screen.findByText("Understood.");
+      const history = JSON.parse(fetchMock.mock.calls[1][1].body).history.map((entry: { content: string }) => entry.content);
+      expect(history).toContain('Discarded the changes below. The board was not changed.\nNot applied:\n- Remove "Map the user journey" from Backlog');
+    });
+
+    it("refuses to apply a removal after the board was edited, so the edit is not overwritten", async () => {
+      const user = userEvent.setup();
+      stubChat(removal);
+      render(<Board isVisible onLogout={() => undefined} />);
+      await user.click(screen.getByLabelText("AI assistant"));
+      await ask(user, "remove the journey card");
+      await screen.findByRole("button", { name: "Apply" });
+
+      // Edit the board by hand while the proposal waits.
+      await user.click(screen.getByRole("button", { name: "Rename Backlog" }));
+      const columnInput = screen.getByLabelText("Column name");
+      await user.clear(columnInput);
+      await user.type(columnInput, "Ideas");
+      await user.click(screen.getByRole("button", { name: "Rename column" }));
+
+      await user.click(screen.getByRole("button", { name: "Apply" }));
+
+      expect(screen.getByText("The board changed after this suggestion, so nothing was applied. Ask again for an up-to-date suggestion.")).toBeInTheDocument();
+      expect(screen.getByRole("heading", { name: "Ideas" })).toBeInTheDocument();
+      expect(within(screen.getByRole("region", { name: "Ideas" })).getByText("Map the user journey")).toBeInTheDocument();
+    });
+  });
 });

@@ -18,7 +18,7 @@ Backend (Render, or the repository-root `.env` locally; see `.env.example`):
 |---|---|---|---|
 | `DATABASE_URL` | yes | none | Postgres connection string. The app does not start without it. |
 | `GROQ_API_KEY` | for the AI | none | Without it the AI routes return 503; everything else works. |
-| `GROQ_MODEL` | no | `openai/gpt-oss-20b` | Chat model, sent with `reasoning_effort: "low"`. |
+| `GROQ_MODEL` | no | `openai/gpt-oss-20b` | Chat model, sent with `reasoning_effort: "medium"` (the connectivity check uses `"low"`). |
 | `GROQ_TIMEOUT_MS` | no | `15000` | Overall deadline for one Groq request. |
 | `GROQ_VISION_MODEL` | no | `qwen/qwen3.8-27b` | Reads attached images. A Groq preview model, so it may be retired; set it to another vision model then, or to an empty value to turn image reading off. Documents keep working either way. |
 | `AI_ATTACHMENT_MAX_CHARS` | no | `10000` | Attachment text sent with one AI message, shared between its files. Raise it on a paid Groq plan. |
@@ -59,7 +59,7 @@ The Docker image starts with `uv run --no-sync`, which skips the dependency chec
 
 ## Local run
 
-See the [README](../README.md) for the quick start. Without Docker, any Postgres 16 reachable through `DATABASE_URL` works:
+See the [README](../README.md) for the quick start, or [local-setup-windows.md](local-setup-windows.md) on Windows. Without Docker, any Postgres 16 reachable through `DATABASE_URL` works:
 
 ```bash
 cd backend

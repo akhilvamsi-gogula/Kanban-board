@@ -4,10 +4,10 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from starlette.datastructures import UploadFile as StarletteUploadFile
 
-from ..ai_service import SYSTEM_PROMPT, InvalidBoardUpdate, MalformedReply, call_groq, groq_settings, message_content, parse_chat_reply, raise_for_groq_error
+from ..ai_service import SYSTEM_PROMPT, InvalidBoardUpdate, MalformedReply, call_groq, groq_settings, mentioned_card_ids, message_content, parse_chat_reply, raise_for_groq_error, replace_card_ids
 from ..attachments import MAX_FILE_BYTES, AttachmentError, attachment_block, describe_image, detect_kind, extract_document, max_chars, safe_name
 from ..deps import get_repository
-from ..models import AiChatRequest, AiChatResponse, AttachmentText, UserResponse
+from ..models import AiChatRequest, AiChatResponse, AttachmentText, BoardResponse, BoardUpdate, UserResponse
 from ..rate_limit import ai_user
 from ..repository import KanbanRepository
 
@@ -112,11 +112,12 @@ async def ai_chat(
     # Turning a document into cards needs a longer reply than a single edit.
     max_tokens = 2500 if payload.attachments else 1500
 
-    # Small/fast models occasionally emit invalid JSON or claim a change without including
-    # it; one retry resolves most of these transient generation failures.
+    # Small/fast models occasionally emit invalid JSON, claim a change without making it, or
+    # show the user an internal card id; one retry resolves most of these.
+    fallback: AiChatResponse | None = None
     for attempt in range(1, MAX_ATTEMPTS + 1):
         response = await call_groq(
-            {"model": settings.model, "messages": messages, "reasoning_effort": "low", "include_reasoning": False, "max_tokens": max_tokens},
+            {"model": settings.model, "messages": messages, "reasoning_effort": "medium", "include_reasoning": False, "max_tokens": max_tokens},
             settings,
         )
         raise_for_groq_error(response)
@@ -124,14 +125,30 @@ async def ai_chat(
         try:
             reply = parse_chat_reply(message_content(response), payload.board)
         except InvalidBoardUpdate:
-            if is_last_attempt:
+            if is_last_attempt and fallback is None:
                 raise HTTPException(status_code=502, detail="Groq returned an invalid board update.") from None
             continue
         except (MalformedReply, ValueError):
-            if is_last_attempt:
+            if is_last_attempt and fallback is None:
                 raise HTTPException(status_code=502, detail="Groq response was malformed.") from None
             continue
-        await run_in_threadpool(repository.log_ai_chat_message, user.id, payload.board.id, "assistant", reply.assistant_message)
-        return reply
+        if mentioned_card_ids(reply.assistant_message, _boards(payload.board, reply)) and not is_last_attempt:
+            # Usable, but worded with ids: keep it in case the retry fails outright.
+            fallback = reply
+            continue
+        return await _finish(repository, user.id, payload.board, reply)
 
-    raise AssertionError("unreachable")
+    assert fallback is not None
+    return await _finish(repository, user.id, payload.board, fallback)
+
+
+def _boards(board: BoardResponse, reply: AiChatResponse) -> list[BoardUpdate]:
+    return [board, reply.board_update] if reply.board_update else [board]
+
+
+async def _finish(repository: KanbanRepository, user_id: str, board: BoardResponse, reply: AiChatResponse) -> AiChatResponse:
+    # Card ids are internal: any the reply still mentions after the retry are shown as the
+    # card's title instead, so an id never reaches the user.
+    reply = reply.model_copy(update={"assistant_message": replace_card_ids(reply.assistant_message, _boards(board, reply))})
+    await run_in_threadpool(repository.log_ai_chat_message, user_id, board.id, "assistant", reply.assistant_message)
+    return reply

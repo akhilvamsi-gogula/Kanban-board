@@ -138,10 +138,14 @@ On the backend (`routers/ai.py`, `ai_service.py`):
 1. The request's `board.id` must be a board the session user owns (404 otherwise). The client's copy of the board is used as context, because it may include edits still being saved. It is sent to Groq as compact JSON without `owner_id`.
 2. The model must reply with JSON `{assistant_message, board_update?}`. `board_update` may be partial: only the columns it changed.
 3. `merge_board_update` folds it into the request's board. Columns stay fixed; a listed column's `cards` replaces that column's cards; a card placed somewhere is removed from its old column; details the model omitted are kept. The result is validated with the same `BoardUpdate` model as a normal save, so the frontend always receives a complete, valid board.
-4. Malformed JSON, a failed merge, or a reply that claims a change (matches `CLAIMED_CHANGE_PATTERN`) without a `board_update` counts as a failed attempt. There is one retry, then a 502.
-5. The prompt and the reply are logged to `ai_chat_messages` for analysis in SQL. They are not exposed through any endpoint.
+4. `describe_changes` compares the request's board with the merged one and returns the change list (`changes: [{kind, text}]`: board or column renamed, card added, removed, moved, renamed, details changed, cards reordered), naming cards by title and columns by name. The list comes from code, not from the model. An update that changes nothing is dropped.
+5. Malformed JSON, a failed merge, or a reply that claims a change (matches `CLAIMED_CHANGE_PATTERN`) while making none counts as a failed attempt. There is one retry, then a 502.
+6. Card ids are internal. A reply that mentions one is retried once; if the retry fails or also mentions one, the server shows each id as the card's quoted title (`replace_card_ids`), so an id never reaches the user.
+7. The prompt and the reply are logged to `ai_chat_messages` for analysis in SQL. They are not exposed through any endpoint.
 
-A returned `board_update` is applied like any local edit, through `onColumnsChange`, so it takes the same optimistic save path.
+The chat call uses `reasoning_effort: "medium"`. With `"low"` the model often missed some of the cards in requests such as "remove all cards with number 2" (see PLAN.md Part 22).
+
+The panel shows the change list under the reply. A returned `board_update` is applied like any local edit, through `onColumnsChange`, so it takes the same optimistic save path. An update that removes a card is the exception: the panel shows its own text and the list instead of the model's words, and nothing changes until Apply. Send is blocked until then, and Apply is refused if the board changed meanwhile, because the update replaces the whole board. The chat history sent to the model includes each change list and whether it was applied.
 
 **Attachments.** `POST /api/ai/attachments` takes one multipart `file` (4 MB at most, because the hosting proxy caps request bodies at 4.5 MB; an over-size `Content-Length` is refused before the body is read). The type is decided from the extension plus the file's leading bytes, never the browser's content type. PDF (`pypdf`), DOCX, XLSX, PPTX and text files are parsed in the threadpool; Office files are checked for a 50 MB unpacked size first. PNG, JPG and WEBP go once to `GROQ_VISION_MODEL`, which turns the image into text. The route returns `{name, text, truncated}` and stores nothing.
 

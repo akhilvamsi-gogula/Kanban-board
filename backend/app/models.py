@@ -151,10 +151,24 @@ class AiChatRequest(BaseModel):
     attachments: list[AttachmentText] = Field(default_factory=list, max_length=3)
 
 
+class BoardChange(BaseModel):
+    """One line of what an AI update changes, computed by the server from the before and after
+    boards rather than taken from the model's own description."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal[
+        "board_renamed", "column_renamed", "card_added", "card_removed", "card_moved",
+        "card_renamed", "card_details_changed", "cards_reordered",
+    ]
+    text: str
+
+
 class AiChatResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     assistant_message: str = Field(min_length=1, max_length=4000)
     # Always the complete board after applying the model's (possibly partial) update, already
-    # validated, so the client can apply and save it as-is.
+    # validated, so the client can apply and save it as-is. Never set when nothing changes.
     board_update: BoardUpdate | None = None
+    changes: list[BoardChange] = Field(default_factory=list)
